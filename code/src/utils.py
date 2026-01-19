@@ -1,397 +1,276 @@
+"""Shared utilities for dataset loading, evaluation, and graph manipulation.
+
+The helpers here intentionally keep dataset loading and graph splitting logic
+in one place so other modules can stay focused on model training/inference.
+"""
+
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Sequence, Tuple
+
 import dgl
-
-
+import numpy as np
+import scipy.sparse as sp
+import torch
+import torch.nn.functional as F
 from sklearn.decomposition import PCA
 from sklearn.manifold import TSNE
-import torch as th
-import pandas as pd
-import matplotlib.pyplot as plt
-from networkx.generators.random_graphs import dense_gnm_random_graph, erdos_renyi_graph
-from networkx.generators.classic import barbell_graph
-from networkx.generators.community import connected_caveman_graph
-from networkx.generators.community import planted_partition_graph
-from networkx.algorithms.community.asyn_fluid import asyn_fluidc
-
-import numpy as np
-
-
-import os
-import sys
-import pickle as pkl
-import scipy.sparse as sp
-
-
-import networkx as nx
-from graphgallery.datasets import NPZDataset
-import random
-
-from torch import nn
-import torch
-
-from networkx.generators.random_graphs import dense_gnm_random_graph
-
-from sklearn.neural_network import MLPClassifier
-from sklearn.datasets import make_classification
 from sklearn.model_selection import train_test_split
-import torch.nn.functional as F
+from sklearn.neural_network import MLPClassifier
+
+DATASET_DIR = Path(__file__).resolve().parent.parent / "datasets"
 
 
-class Classification(nn.Module):
+class Classification(torch.nn.Module):
+    """Small MLP used by detached classifiers."""
 
-    def __init__(self, emb_size, num_classes):
-        super(Classification, self).__init__()
+    def __init__(self, emb_size: int, num_classes: int) -> None:
+        super().__init__()
+        self.fc1 = torch.nn.Linear(emb_size, 256)
+        self.fc2 = torch.nn.Linear(256, num_classes)
 
-        self.fc1 = nn.Linear(emb_size, 256)
-        self.fc2 = nn.Linear(256, num_classes)
-
-    def forward(self, x):
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = F.relu(self.fc1(x))
         return F.log_softmax(self.fc2(x), dim=1)
 
 
-def load_graphgallery_data(dataset):
-    # set `verbose=False` to avoid additional outputs
-    data = NPZDataset(dataset, verbose=False)
-    graph = data.graph
-    nx_g = nx.from_scipy_sparse_matrix(graph.adj_matrix)
+def _unwrap_npz_array(array: np.ndarray):
+    """Return the actual object stored in an NPZ array if it was pickled.
 
-    for node_id, node_data in nx_g.nodes(data=True):
-        node_data["features"] = graph.node_attr[node_id].astype(np.float32)
-        if dataset in ['blogcatalog', 'flickr']:
-            node_data["labels"] = graph.node_label[node_id].astype(np.long) - 1
-        else:
-            node_data["labels"] = graph.node_label[node_id].astype(np.long)
-
-    dgl_graph = dgl.from_networkx(nx_g, node_attrs=['features', 'labels'])
-    dgl_graph = dgl.add_self_loop(dgl_graph)
-    return dgl_graph, len(np.unique(graph.node_label))
-
-# def load_data(dataset_name):
-#     """
-#     https://docs.dgl.ai/api/python/dgl.data.html#node-prediction-datasets
-
-#     We can select dataset from:
-#         Citation datasets: Cora, Citeseer, Pubmed
-#     """
-#     if dataset_name == "Cora":
-#         data = dgl.data.CoraGraphDataset()
-#     elif dataset_name == "Citeseer":
-#         data = dgl.data.CiteseerGraphDataset()
-#     elif dataset_name == "Pubmed":
-#         data = dgl.data.PubmedGraphDataset()
-#     elif dataset_name == "Amazon":
-#         data = dgl.data.AmazonCoBuyComputerDataset()
-#     elif dataset_name == 'Photo': # not working
-#         data = dgl.data.AmazonCoBuyPhotoDataset(force_reload=True)
-#     elif dataset_name == 'Physics':
-#         data = dgl.data.CoauthorPhysicsDataset()
-#     elif dataset_name == "Coauthor":
-#         data = dgl.data.CoauthorCSDataset()
-#     elif dataset_name == "Reddit": # not working
-#         data = dgl.data.RedditDataset()
-#     elif dataset_name == 'AIFB': # not working
-#         data = dgl.data.AIFBDataset()
-#     elif dataset_name == 'CoraFull':
-#         data = dgl.data.CoraFullDataset()
-
-#     g = data[0]
-#     g = dgl.transform.add_self_loop(g)
-
-#     g.ndata['features'] = g.ndata['feat']
-#     g.ndata['labels'] = g.ndata['label']
-#     if dataset_name in ['Photo', 'Amazon']: # workaround of incorrect value returned by DGL
-#         return g, len(np.unique(g.ndata['labels']))
-#     return g, data.num_classes
-
-
-def get_dataset_feature_label(dataset_name):
+    Some NPZ files store a sparse matrix inside a 0-d object array; this helper
+    unwraps it so downstream logic can treat it as a normal matrix.
     """
-    generate feature and label for each dataset
+    if isinstance(array, np.ndarray) and array.dtype == object:
+        return array.item()
+    return array
+
+
+def _load_csr_from_npz(data: np.lib.npyio.NpzFile, name_candidates: Sequence[str]) -> sp.csr_matrix:
+    """Load a CSR matrix from an NPZ file using common key conventions.
+
+    The loader accepts both:
+    1) Direct sparse/dense arrays stored under a key.
+    2) Triplet keys (<name>_data, <name>_indices, <name>_indptr, <name>_shape).
     """
-    if dataset_name == "Cora":
-        data = dgl.data.CoraGraphDataset()
-    elif dataset_name == "Citeseer":
-        data = dgl.data.CiteseerGraphDataset()
-    elif dataset_name == "Pubmed":
-        data = dgl.data.PubmedGraphDataset()
-    elif dataset_name == "Amazon":
-        data = dgl.data.AmazonCoBuyComputerDataset()
-    elif dataset_name == 'Photo':  # not working
-        data = dgl.data.AmazonCoBuyPhotoDataset(force_reload=True)
-    elif dataset_name == 'Physics':
-        data = dgl.data.CoauthorPhysicsDataset()
-    elif dataset_name == "Coauthor":
-        data = dgl.data.CoauthorCSDataset()
-    elif dataset_name == "Reddit":  # not working
-        data = dgl.data.RedditDataset()
-    elif dataset_name == 'AIFB':  # not working
-        data = dgl.data.AIFBDataset()
-    elif dataset_name == 'CoraFull':
-        data = dgl.data.CoraFullDataset()
+    for name in name_candidates:
+        if name in data:
+            matrix = _unwrap_npz_array(data[name])
+            if sp.issparse(matrix):
+                return matrix.tocsr()
+            return sp.csr_matrix(matrix)
 
-    g = data[0]
-    g = dgl.transform.add_self_loop(g)
+        data_key = f"{name}_data"
+        indices_key = f"{name}_indices"
+        indptr_key = f"{name}_indptr"
+        shape_key = f"{name}_shape"
+        if data_key in data and indices_key in data and indptr_key in data and shape_key in data:
+            return sp.csr_matrix(
+                (data[data_key], data[indices_key], data[indptr_key]),
+                shape=tuple(data[shape_key]),
+            )
 
-    g.ndata['features'] = g.ndata['feat']
-    g.ndata['labels'] = g.ndata['label']
-    feature = g.ndata['feat'].numpy()
-    label = g.ndata['label'].numpy()
-    return feature, label
+    raise KeyError(f"Could not find CSR matrix keys in NPZ: {name_candidates}")
 
 
-def compute_fidelity(pred_surrogate, pred_target):
-    _surrogate = th.argmax(pred_surrogate, dim=1)
-    _target = th.argmax(pred_target, dim=1)
-    _fidelity = (_surrogate == _target).float().sum() / len(pred_surrogate)
-    return _fidelity.clone().detach().cpu().item()
+def _load_labels_from_npz(data: np.lib.npyio.NpzFile) -> np.ndarray:
+    """Load labels from an NPZ file using common key conventions.
 
-
-def compute_acc(pred, labels):
+    If labels are one-hot encoded, we convert them to class indices.
     """
-    Compute the accuracy of prediction given the labels.
+    for key in ("labels", "label", "node_label", "y"):
+        if key in data:
+            labels = _unwrap_npz_array(data[key])
+            labels = np.asarray(labels)
+            if labels.ndim > 1:
+                labels = labels.argmax(axis=1)
+            return labels.astype(np.int64)
+    raise KeyError("Could not find label keys in NPZ")
+
+
+def load_npz_graph(dataset: str, root_dir: Path | None = None, add_self_loop: bool = True) -> Tuple[dgl.DGLGraph, int]:
+    """Load a graph stored as NPZ into a DGLGraph.
+
+    The loader supports multiple NPZ layouts that are commonly produced by
+    GraphGallery, PyG, or custom scripts. It handles both sparse and dense
+    adjacency/feature matrices.
     """
+    root_dir = root_dir or DATASET_DIR
+    path = Path(root_dir) / f"{dataset}.npz"
+    if not path.exists():
+        raise FileNotFoundError(f"Dataset not found: {path}")
+
+    with np.load(path, allow_pickle=True) as data:
+        adjacency = _load_csr_from_npz(data, ("adj", "adj_matrix", "adjacency"))
+        features = _load_csr_from_npz(data, ("attr", "features", "node_attr", "x"))
+        labels = _load_labels_from_npz(data)
+
+    if sp.issparse(features):
+        features = features.toarray()
+    features = np.asarray(features, dtype=np.float32)
+
+    # Build a DGL graph from the adjacency matrix and attach node attributes.
+    graph = dgl.from_scipy(adjacency)
+    graph.ndata["features"] = torch.from_numpy(features)
+    graph.ndata["labels"] = torch.from_numpy(labels)
+
+    if add_self_loop:
+        # GNN baselines in this repo expect self-loops to stabilize training.
+        graph = dgl.add_self_loop(graph)
+
+    num_classes = int(np.unique(labels).shape[0])
+    return graph, num_classes
+
+
+def compute_fidelity(pred_surrogate: torch.Tensor, pred_target: torch.Tensor) -> float:
+    """Return the agreement ratio between surrogate and target predictions.
+
+    Fidelity is defined as the fraction of nodes where the surrogate and target
+    predict the same class.
+    """
+    surrogate = torch.argmax(pred_surrogate, dim=1)
+    target = torch.argmax(pred_target, dim=1)
+    return (surrogate == target).float().mean().item()
+
+
+def compute_acc(pred: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+    """Compute accuracy of model predictions."""
     labels = labels.long()
-    return (th.argmax(pred, dim=1) == labels).float().sum() / len(pred)
+    return (torch.argmax(pred, dim=1) == labels).float().mean()
 
 
-def inductive_split(g):
-    """Split the graph into training graph, validation graph, and test graph by training
-    and validation masks.  Suitable for inductive models."""
-    train_g = g.subgraph(g.ndata['train_mask'])
-    val_g = g.subgraph(g.ndata['train_mask'] | g.ndata['val_mask'])
-    test_g = g
-    return train_g, val_g, test_g
+def projection(
+    embeddings: np.ndarray,
+    labels: np.ndarray,
+    transform_name: str = "TSNE",
+    show_figure: bool = True,
+    gnn: str = "Graphsage",
+    dataset: str = "Cora",
+) -> np.ndarray:
+    """Project embeddings into 2D via TSNE or PCA, optionally plotting them.
 
+    The function returns the 2D embedding coordinates. Visualization is optional
+    so this can be used in headless environments (e.g., batch training).
+    """
+    if transform_name.upper() == "TSNE":
+        transformer = TSNE(n_components=2, n_iter=3000, n_jobs=-1)
+    elif transform_name.upper() == "PCA":
+        transformer = PCA(n_components=2)
+    else:
+        raise ValueError("transform_name should be TSNE or PCA")
 
-def projection(X, y, transform_name='TSNE', show_figure=True, gnn='Graphsage', dataset='Cora'):
-
-    if transform_name == 'TSNE':
-        transform = TSNE
-        trans = transform(n_components=2, n_iter=3000, n_jobs=-1)
-        emb_transformed = pd.DataFrame(trans.fit_transform(X))
-    elif transform_name == 'PCA':
-        transform = PCA
-        trans = transform(n_components=2)
-        emb_transformed = pd.DataFrame(trans.fit_transform(X))
+    projected = transformer.fit_transform(embeddings)
 
     if show_figure:
-        emb_transformed["label"] = y
-        alpha = 0.7
+        # Only import plotting libraries when a figure is requested to avoid
+        # unnecessary dependencies during headless runs.
+        import pandas as pd
+        import matplotlib.pyplot as plt
 
+        frame = pd.DataFrame(projected, columns=["x", "y"])
+        frame["label"] = labels
         fig, ax = plt.subplots(figsize=(7, 7))
-        ax.scatter(
-            emb_transformed[0],
-            emb_transformed[1],
-            c=emb_transformed["label"].astype("category"),
-            cmap="jet",
-            alpha=alpha,
-        )
+        ax.scatter(frame["x"], frame["y"], c=frame["label"].astype("category"), cmap="jet", alpha=0.7)
         ax.set(aspect="equal", xlabel="$X_1$", ylabel="$X_2$")
-        plt.axis('off')
-        plt.title(
-            "{} visualization of {} embeddings for {} dataset".format(transform.__name__,
-                                                                      gnn,
-                                                                      dataset)
-        )
+        plt.axis("off")
+        plt.title(f"{transformer.__class__.__name__} visualization of {gnn} embeddings for {dataset}")
         plt.show()
 
-    return emb_transformed.iloc[:, [0, 1]]
+    return projected
 
 
-# def generate_random_graph(nodes_per_class, num_classes, num_feats):
+def split_graph(
+    graph: dgl.DGLGraph,
+    frac_list: Sequence[float] = (0.6, 0.2, 0.2),
+    seed: int = 0,
+) -> Tuple[dgl.DGLGraph, dgl.DGLGraph, dgl.DGLGraph]:
+    """Split a graph into train/val/test subgraphs by node indices.
 
-#     g_query = planted_partition_graph(num_classes, nodes_per_class, 0.5, 0.02)
-#     node_features_query = np.random.choice([0.0, 1.0], size=(len(g_query), num_feats), p=[9./10, 1./10])
+    We permute nodes deterministically with a seed to keep experiments repeatable.
+    """
+    num_nodes = graph.number_of_nodes()
+    generator = torch.Generator().manual_seed(seed)
+    perm = torch.randperm(num_nodes, generator=generator)
 
-#     node_labels_query = []
-#     for _class in range(0, num_classes):
-#         node_labels_query.extend([_class]*nodes_per_class)
+    train_end = int(num_nodes * frac_list[0])
+    val_end = train_end + int(num_nodes * frac_list[1])
 
-#     for node_id, node_data in g_query.nodes(data=True):
-#         node_data["features"] = node_features_query[node_id].astype(np.float32)
-#         node_data["labels"] = node_labels_query[node_id]
+    # Slice node indices into train/val/test splits.
+    train_nodes = perm[:train_end]
+    val_nodes = perm[train_end:val_end]
+    test_nodes = perm[val_end:]
 
-#     G_QUERY = dgl.from_networkx(g_query, node_attrs=['features', 'labels'])
-#     return G_QUERY
+    train_g = graph.subgraph(train_nodes)
+    val_g = graph.subgraph(val_nodes)
+    test_g = graph.subgraph(test_nodes)
 
+    _ensure_features_and_labels(train_g)
+    _ensure_features_and_labels(val_g)
+    _ensure_features_and_labels(test_g)
 
-def generate_random_graph(n, m, num_classes, num_feats):
-    #g_query = dense_gnm_random_graph(n, m)
-    g_query = erdos_renyi_graph(n, 0.01)
-    node_features_query = np.random.choice(
-        [0, 1], size=(len(g_query), num_feats), p=[9.5/10, 0.5/10])
-
-    labels = list(range(0, num_classes))
-    for node_id, node_data in g_query.nodes(data=True):
-        node_data["features"] = node_features_query[node_id].astype(np.float32)
-        node_data["labels"] = random.choice(labels)
-
-    G_QUERY = dgl.from_networkx(g_query, node_attrs=['features', 'labels'])
-    G_QUERY = dgl.add_self_loop(G_QUERY)
-    return G_QUERY
+    return train_g, val_g, test_g
 
 
-def load_planetoid(dataset, data_path, _log):
-    def parse_index_file(filename):
-        """Parse index file."""
-        index = []
-        for line in open(filename):
-            index.append(int(line.strip()))
-        return index
+def split_graph_different_ratio(
+    graph: dgl.DGLGraph,
+    frac_list: Sequence[float] = (0.6, 0.2, 0.2),
+    ratio: float = 0.5,
+    seed: int = 0,
+) -> Tuple[dgl.DGLGraph, dgl.DGLGraph, dgl.DGLGraph]:
+    """Split graph and shrink the training subset by a ratio.
 
-    if _log is not None:
-        _log.info('Loading dataset %s.' % dataset)
-    names = ['x', 'y', 'tx', 'ty', 'allx', 'ally', 'graph']
-    objects = []
-    for i in range(len(names)):
-        with open(os.path.join(data_path, "ind.{}.{}".format(dataset, names[i])), 'rb') as f:
-            if sys.version_info > (3, 0):
-                objects.append(pkl.load(f, encoding='latin1'))
-            else:
-                objects.append(pkl.load(f))
+    This supports attack settings where the query graph is only a fraction of
+    the full training split.
+    """
+    train_g, val_g, test_g = split_graph(graph, frac_list=frac_list, seed=seed)
+    train_nodes = train_g.nodes()[: int(train_g.number_of_nodes() * ratio)]
+    train_g = graph.subgraph(train_nodes)
 
-    x, y, tx, ty, allx, ally, graph = tuple(objects)
-    test_idx_reorder = parse_index_file(
-        os.path.join(data_path, "ind.{}.test.index".format(dataset))
+    _ensure_features_and_labels(train_g)
+    _ensure_features_and_labels(val_g)
+    _ensure_features_and_labels(test_g)
+
+    return train_g, val_g, test_g
+
+
+def delete_dgl_graph_edge(train_g: dgl.DGLGraph) -> dgl.DGLGraph:
+    """Return a graph with only self-loops while preserving node features/labels."""
+    empty_graph = dgl.graph(([], []), num_nodes=train_g.number_of_nodes())
+    empty_graph = dgl.add_self_loop(empty_graph)
+    empty_graph.ndata["features"] = train_g.ndata["features"]
+    empty_graph.ndata["labels"] = train_g.ndata["labels"]
+    return empty_graph
+
+
+def train_detached_classifier(train_g: dgl.DGLGraph, embeddings: torch.Tensor) -> MLPClassifier:
+    """Train an sklearn MLP on frozen embeddings.
+
+    The detached classifier emulates the evaluation in the original paper,
+    where the surrogate embeddings are fed into a separate MLP head.
+    """
+    features = embeddings.detach().cpu().numpy()
+    labels = train_g.ndata["labels"].cpu().numpy()
+
+    # Use stratified split so all classes appear in train/test sets.
+    train_x, test_x, train_y, test_y = train_test_split(
+        features,
+        labels,
+        stratify=labels,
+        random_state=1,
     )
-    test_idx_range = np.sort(test_idx_reorder)
 
-    if dataset == 'citeseer':
-        # Fix citeseer dataset (there are some isolated nodes in the graph)
-        # Find isolated nodes, add them as zero-vecs into the right position
-        test_idx_range_full = range(
-            min(test_idx_reorder), max(test_idx_reorder) + 1)
-        tx_extended = sp.lil_matrix((len(test_idx_range_full), x.shape[1]))
-        tx_extended[test_idx_range - min(test_idx_range), :] = tx
-        tx = tx_extended
-        ty_extended = np.zeros((len(test_idx_range_full), y.shape[1]))
-        ty_extended[test_idx_range - min(test_idx_range), :] = ty
-        ty = ty_extended
+    classifier = MLPClassifier(random_state=1, max_iter=300).fit(train_x, train_y)
+    classifier.predict_proba(test_x[:1])
+    classifier.predict(test_x[:5, :])
 
-    features = sp.vstack((allx, tx)).tolil()
-    features[test_idx_reorder, :] = features[test_idx_range, :]
-    adj = nx.adjacency_matrix(nx.from_dict_of_lists(graph))
-
-    # cast!!!
-    adj = adj.astype(np.int)
-    features = features.tocsr()
-    features = features.astype(np.float32)
-
-    labels = np.vstack((ally, ty))
-    labels[test_idx_reorder, :] = labels[test_idx_range, :]
-
-    idx_test = test_idx_range.tolist()
-    idx_train = list(range(len(y)))
-    idx_val = list(range(len(y), len(y) + 500))
-
-    g = nx.from_scipy_sparse_matrix(adj)
-
-    return g, adj, features.toarray(), labels, idx_train, idx_val, idx_test
+    # Keep the score printed for parity with previous logs.
+    print(classifier.score(test_x, test_y))
+    return classifier
 
 
-def split_graph_into_communities(g, n_community):
-
-    GCCs = sorted(nx.connected_components(g), key=len, reverse=True)
-    g_GCC = g.subgraph(GCCs[0])
-    communities = asyn_fluidc(g_GCC, n_community)
-
-    splitted_graphs = []
-    for community in communities:
-        splitted_graphs.append(g_GCC.subgraph(community))
-
-    splitted_graphs.sort(key=len, reverse=True)
-
-    return splitted_graphs
-
-
-def generate_DGL_graph(g, features, labels):
-
-    mapping = dict([(nid, i) for i, nid in enumerate(g.nodes())])
-
-    for node_id, node_data in g.nodes(data=True):
-        node_data["features"] = features[node_id]
-        node_data["labels"] = np.argmax(labels[node_id])
-
-    relabel_g = nx.relabel_nodes(g, mapping)
-
-    return relabel_g
-
-
-def split_graph(g, frac_list=[0.6, 0.2, 0.2]):
-    train_subset, val_subset, test_subset = dgl.data.utils.split_dataset(
-        g, frac_list=frac_list, shuffle=True)
-    train_g = g.subgraph(train_subset.indices)
-    val_g = g.subgraph(val_subset.indices)
-    test_g = g.subgraph(test_subset.indices)
-
-    if not 'features' in train_g.ndata:
-        train_g.ndata['features'] = train_g.ndata['feat']
-    if not 'labels' in train_g.ndata:
-        train_g.ndata['labels'] = train_g.ndata['label']
-
-    if not 'features' in val_g.ndata:
-        val_g.ndata['features'] = val_g.ndata['feat']
-    if not 'labels' in train_g.ndata:
-        val_g.ndata['labels'] = val_g.ndata['label']
-
-    if not 'features' in test_g.ndata:
-        test_g.ndata['features'] = test_g.ndata['feat']
-    if not 'labels' in train_g.ndata:
-        test_g.ndata['labels'] = test_g.ndata['label']
-    return train_g, val_g, test_g
-
-
-def split_graph_different_ratio(g, frac_list=[0.6, 0.2, 0.2], ratio=0.5):
-    print(g)
-    train_subset, val_subset, test_subset = dgl.data.utils.split_dataset(
-        g, frac_list=frac_list, shuffle=True)
-    train_index = train_subset.indices[:int(len(train_subset.indices) * ratio)]
-    train_g = g.subgraph(train_index)
-    val_g = g.subgraph(val_subset.indices)
-    test_g = g.subgraph(test_subset.indices)
-
-    if not 'features' in train_g.ndata:
-        train_g.ndata['features'] = train_g.ndata['feat']
-    if not 'labels' in train_g.ndata:
-        train_g.ndata['labels'] = train_g.ndata['label']
-
-    if not 'features' in val_g.ndata:
-        val_g.ndata['features'] = val_g.ndata['feat']
-    if not 'labels' in train_g.ndata:
-        val_g.ndata['labels'] = val_g.ndata['label']
-
-    if not 'features' in test_g.ndata:
-        test_g.ndata['features'] = test_g.ndata['feat']
-    if not 'labels' in train_g.ndata:
-        test_g.ndata['labels'] = test_g.ndata['label']
-    return train_g, val_g, test_g
-
-
-def delete_dgl_graph_edge(train_g):
-    temp_g = nx.Graph()
-    for nid in range(train_g.number_of_nodes()):
-        temp_g.add_node(nid)
-    dgl_g = dgl.from_networkx(temp_g)
-    dgl_g = dgl.add_self_loop(dgl_g)
-    dgl_g.ndata['features'] = train_g.ndata['features']
-    dgl_g.ndata['labels'] = train_g.ndata['labels']
-    return dgl_g
-
-
-def train_detached_classifier(test_g, embds_surrogate):
-
-    X, y = make_classification(n_samples=100, random_state=1)
-
-    X = embds_surrogate.clone().detach().cpu().numpy()
-    y = test_g.ndata['labels']
-
-    X_train, X_test, y_train, y_test = train_test_split(X, y, stratify=y,
-                                                        random_state=1)
-
-    clf = MLPClassifier(random_state=1, max_iter=300).fit(X_train, y_train)
-    clf.predict_proba(X_test[:1])
-
-    clf.predict(X_test[:5, :])
-
-    print(clf.score(X_test, y_test))
-    return clf
+def _ensure_features_and_labels(graph: dgl.DGLGraph) -> None:
+    """Make sure features/labels live under the expected keys."""
+    if "features" not in graph.ndata and "feat" in graph.ndata:
+        graph.ndata["features"] = graph.ndata["feat"]
+    if "labels" not in graph.ndata and "label" in graph.ndata:
+        graph.ndata["labels"] = graph.ndata["label"]

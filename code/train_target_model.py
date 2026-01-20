@@ -1,8 +1,4 @@
-"""Train target GNN models on NPZ datasets without GraphGallery.
-
-This script focuses on training the target model that will later be queried by
-the model-stealing attack pipeline.
-"""
+"""Train target GNN models using PyTorch Geometric."""
 
 from __future__ import annotations
 
@@ -12,16 +8,15 @@ import pickle
 
 import torch
 
-from src.gat import run_gat_target
-from src.gin import run_gin_target
-from src.sage import run_sage_target
+from src.gat import GAT, TrainConfig as GATConfig, evaluate_gat, train_gat
+from src.gin import GIN, TrainConfig as GINConfig, evaluate_gin, train_gin
+from src.sage import SAGE, TrainConfig as SAGEConfig, evaluate_sage, train_sage
 from src.utils import load_npz_graph, split_graph
 
 
 def _parse_args() -> argparse.Namespace:
-    """Parse CLI arguments for target model training."""
-    parser = argparse.ArgumentParser("Target model training")
-    parser.add_argument("--gpu", type=int, default=1, help="GPU device ID, -1 for CPU")
+    parser = argparse.ArgumentParser("Target model training (PyG)")
+    parser.add_argument("--gpu", type=int, default=-1, help="GPU device ID, -1 for CPU")
     parser.add_argument("--target-model", type=str, default="gat")
     parser.add_argument(
         "--dataset",
@@ -32,67 +27,50 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--num-epochs", type=int, default=200)
     parser.add_argument("--num-hidden", type=int, default=256)
     parser.add_argument("--num-layers", type=int, default=3)
-    parser.add_argument("--fan-out", type=str, default="10,10,10")
-    parser.add_argument("--batch-size", type=int, default=512)
-    parser.add_argument("--val-batch-size", type=int, default=512)
-    parser.add_argument("--log-every", type=int, default=20)
-    parser.add_argument("--eval-every", type=int, default=100)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--dropout", type=float, default=0.5)
-    parser.add_argument("--num-workers", type=int, default=8)
-    parser.add_argument("--inductive", action="store_true")
-    parser.add_argument("--save-pred", type=str, default="")
-    parser.add_argument("--head", type=int, default=4)
     parser.add_argument("--wd", type=float, default=0)
+    parser.add_argument("--head", type=int, default=4)
     args, _ = parser.parse_known_args()
-
-    if args.target_model == "sage":
-        # GraphSAGE uses inductive sampling with a different default fan-out.
-        args.inductive = True
-        args.fan_out = "10,25"
-
     return args
 
 
 def _resolve_device(gpu_id: int) -> torch.device:
-    """Return a CUDA or CPU device based on the requested GPU id."""
-    return torch.device(f"cuda:{gpu_id}" if gpu_id >= 0 else "cpu")
+    if gpu_id >= 0 and torch.cuda.is_available():
+        return torch.device(f"cuda:{gpu_id}")
+    return torch.device("cpu")
 
 
 def main() -> None:
-    """Entry point for training target models."""
     args = _parse_args()
     device = _resolve_device(args.gpu)
 
-    # Load dataset from the NPZ archive and prepare splits.
-    graph, n_classes = load_npz_graph(args.dataset)
-    in_feats = graph.ndata["features"].shape[1]
-    labels = graph.ndata["labels"]
-
-    train_g, val_g, test_g = split_graph(graph, frac_list=[0.6, 0.2, 0.2])
-    print(train_g.number_of_nodes(), val_g.number_of_nodes(), test_g.number_of_nodes())
-
-    train_g.create_formats_()
-    val_g.create_formats_()
-    test_g.create_formats_()
+    data, n_classes = load_npz_graph(args.dataset)
+    train_idx, val_idx, test_idx = split_graph(data, frac_list=[0.6, 0.2, 0.2])
+    print(len(train_idx), len(val_idx), len(test_idx))
 
     save_dir = Path(f"./target_model_{args.target_model}_{args.num_hidden}")
     save_dir.mkdir(parents=True, exist_ok=True)
     save_name = f"target_model_{args.target_model}_{args.dataset}"
 
-    # Train the requested target model and save the checkpoint.
     if args.target_model == "gat":
-        data = train_g, val_g, test_g, in_feats, labels, n_classes, graph, args.head
-        target_model = run_gat_target(args, device, data)
-        torch.save(target_model, save_dir / save_name)
+        model = GAT(data.num_features, args.num_hidden, n_classes, args.num_layers, args.head, args.dropout)
+        config = GATConfig(args.num_epochs, args.lr, args.wd, args.dropout)
+        train_gat(model, data, train_idx, config, device)
+        torch.save(model.state_dict(), save_dir / save_name)
+        evaluate_gat(model, data, test_idx, device)
     elif args.target_model == "gin":
-        data = train_g, val_g, test_g, in_feats, labels, n_classes
-        target_model = run_gin_target(args, device, data)
-        torch.save(target_model.state_dict(), save_dir / save_name)
+        model = GIN(data.num_features, args.num_hidden, n_classes, args.num_layers, args.dropout)
+        config = GINConfig(args.num_epochs, args.lr, args.wd, args.dropout)
+        train_gin(model, data, train_idx, config, device)
+        torch.save(model.state_dict(), save_dir / save_name)
+        evaluate_gin(model, data, test_idx, device)
     elif args.target_model == "sage":
-        data = in_feats, n_classes, train_g, val_g, test_g
-        target_model = run_sage_target(args, device, data)
-        torch.save(target_model, save_dir / save_name)
+        model = SAGE(data.num_features, args.num_hidden, n_classes, args.num_layers, args.dropout)
+        config = SAGEConfig(args.num_epochs, args.lr, args.wd, args.dropout)
+        train_sage(model, data, train_idx, config, device)
+        torch.save(model.state_dict(), save_dir / save_name)
+        evaluate_sage(model, data, test_idx, device)
     else:
         raise ValueError("target-model should be gat, gin, or sage")
 

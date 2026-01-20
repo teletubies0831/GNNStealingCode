@@ -4,27 +4,25 @@ This is a PyTorch implementation of Model Stealing Attacks Against Inductive Gra
 
 Yun Shen, Xinlei He, Yufei Han, Yang Zhang, [Model Stealing Attacks Against Inductive Graph Neural Networks](https://arxiv.org/abs/2112.08331) (IEEE S&P 2022)
 
-## Step 0: Setup the environments
+## Step 0: Setup the environment (PyTorch Geometric, CPU-only)
+
+From the repository root:
 
 ```
-conda env create --file environment.yaml &&
-conda activate gnn_model_stealing && 
-# Install GraphGallery
-wget https://github.com/EdisonLeeeee/GraphGallery/archive/refs/tags/1.0.0.tar.gz && 
-tar -zxvf 1.0.0.tar.gz && 
-cd GraphGallery-1.0.0/ &&
-pip install -e . --verbose &&
-cd ..
+conda env create --file environment.yaml
+conda activate gnn_model_stealing
 ```
 
-## Step 1: Train the target models:
+This environment installs **PyTorch Geometric (PyG)** and all required dependencies for CPU-only
+training and attacks. No GraphGallery or DGL setup is needed.
+
+## Step 1: Train the target models
 
 ```
-cd code;
-python train_target_model.py --dataset citeseer_full --target-model gat  --num-hidden 256
+cd code
+python train_target_model.py --dataset citeseer_full --target-model gat --num-hidden 256 --gpu -1
 
-# You can also run it with a specified gpu (e.g., gpu02):
-python train_target_model.py --dataset citeseer_full --target-model gat  --num-hidden 256 --gpu 2
+# Note: use --gpu -1 for CPU.
 ```
 Note that we use the following datasets, target model architectures, and numbers of hidden neurons in our paper:
 ```
@@ -37,10 +35,10 @@ Note that we use the following datasets, target model architectures, and numbers
 
 ```
 # Type I attack:
-python3 attack.py --dataset citeseer_full --target-model-dim 256 --num-hidden 256 --target-model gat --surrogate-model gin --recovery-from prediction --query_ratio 1.0 --structure original
+python attack.py --dataset citeseer_full --target-model-dim 256 --num-hidden 256 --target-model gat --surrogate-model gin --recovery-from prediction --query_ratio 1.0 --structure original --gpu -1
 
 # Type II attack:
-python3 attack.py --dataset citeseer_full --target-model-dim 256 --num-hidden 256 --target-model gat --surrogate-model gin --recovery-from prediction --query_ratio 1.0 --structure idgl
+python attack.py --dataset citeseer_full --target-model-dim 256 --num-hidden 256 --target-model gat --surrogate-model gin --recovery-from prediction --query_ratio 1.0 --structure idgl --gpu -1
 ```
 
 Explainations:

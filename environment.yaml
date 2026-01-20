@@ -1,27 +1,27 @@
 name: gnn_model_stealing
 channels:
   - pytorch
-  - nvidia
   - dglteam
   - conda-forge
   - defaults
 dependencies:
   - python=3.10
   - pip
-  - pytorch=2.1
-  - torchvision=0.16
-  - torchaudio=2.1
-  - pytorch-cuda=11.8
-  - dgl=1.1.2
-  - numpy
+  - pytorch=1.13
+  - torchvision=0.14
+  - torchaudio=0.13
+  - cpuonly
+  - dgl=0.9.1
+  - numpy<2
   - scipy
   - scikit-learn
   - pandas
-  - networkx
   - matplotlib
+  - networkx
   - tqdm
   - pyyaml
   - yacs
+  - setuptools<70
   - ipython
   - pip:
       - tabulate==0.9.0

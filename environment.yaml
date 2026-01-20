@@ -24,8 +24,8 @@ dependencies:
   - pip:
       - tabulate==0.9.0
       - torch-geometric==2.3.1
-      - torch-scatter; platform_system == "Windows" and python_version == "3.10"
-      - torch-sparse; platform_system == "Windows" and python_version == "3.10"
-      - torch-cluster; platform_system == "Windows" and python_version == "3.10"
-      - torch-spline-conv; platform_system == "Windows" and python_version == "3.10"
+      - torch-scatter==2.1.1+pt113cpu
+      - torch-sparse==0.6.17+pt113cpu
+      - torch-cluster==1.6.1+pt113cpu
+      - torch-spline-conv==1.2.2+pt113cpu
       - -f https://data.pyg.org/whl/torch-1.13.0+cpu.html

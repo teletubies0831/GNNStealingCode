@@ -16,6 +16,10 @@ conda activate gnn_model_stealing
 This environment installs **PyTorch Geometric (PyG)** and all required dependencies for CPU-only
 training and attacks. No GraphGallery or DGL setup is needed.
 
+If you see pip attempting to build `torch-geometric` from source, it means you are using an
+older `environment.yaml`. Make sure the file contains `pyg=2.3.1` under conda dependencies
+and **does not** list `torch-geometric` under `pip:` before recreating the environment.
+
 ## Step 1: Train the target models
 
 ```

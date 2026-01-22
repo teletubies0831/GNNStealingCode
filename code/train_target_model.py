@@ -58,19 +58,19 @@ def main() -> None:
         config = GATConfig(args.num_epochs, args.lr, args.wd, args.dropout)
         train_gat(model, data, train_idx, config, device)
         torch.save(model.state_dict(), save_dir / save_name)
-        evaluate_gat(model, data, test_idx, device)
+        evaluate_gat(model, data, test_idx, device, train_idx=train_idx, log_metrics=True)
     elif args.target_model == "gin":
         model = GIN(data.num_features, args.num_hidden, n_classes, args.num_layers, args.dropout)
         config = GINConfig(args.num_epochs, args.lr, args.wd, args.dropout)
         train_gin(model, data, train_idx, config, device)
         torch.save(model.state_dict(), save_dir / save_name)
-        evaluate_gin(model, data, test_idx, device)
+        evaluate_gin(model, data, test_idx, device, train_idx=train_idx, log_metrics=True)
     elif args.target_model == "sage":
         model = SAGE(data.num_features, args.num_hidden, n_classes, args.num_layers, args.dropout)
         config = SAGEConfig(args.num_epochs, args.lr, args.wd, args.dropout)
         train_sage(model, data, train_idx, config, device)
         torch.save(model.state_dict(), save_dir / save_name)
-        evaluate_sage(model, data, test_idx, device)
+        evaluate_sage(model, data, test_idx, device, train_idx=train_idx, log_metrics=True)
     else:
         raise ValueError("target-model should be gat, gin, or sage")
 

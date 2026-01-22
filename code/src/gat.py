@@ -56,7 +56,14 @@ def train_gat(model: GAT, data, train_idx: torch.Tensor, config: TrainConfig, de
         optimizer.step()
 
 
-def evaluate_gat(model: GAT, data, eval_idx: torch.Tensor, device: torch.device):
+def evaluate_gat(
+    model: GAT,
+    data,
+    eval_idx: torch.Tensor,
+    device: torch.device,
+    train_idx: torch.Tensor | None = None,
+    log_metrics: bool = False,
+):
     model.eval()
     data = data.to(device)
     with torch.no_grad():
@@ -64,4 +71,14 @@ def evaluate_gat(model: GAT, data, eval_idx: torch.Tensor, device: torch.device)
     pred = logits[eval_idx]
     labels = data.y[eval_idx]
     acc = (pred.argmax(dim=1) == labels).float().mean()
+    if log_metrics:
+        eval_loss = F.cross_entropy(pred, labels).item()
+        msg = f"Eval acc={acc:.4f} loss={eval_loss:.4f}"
+        if train_idx is not None:
+            train_pred = logits[train_idx]
+            train_labels = data.y[train_idx]
+            train_acc = (train_pred.argmax(dim=1) == train_labels).float().mean().item()
+            train_loss = F.cross_entropy(train_pred, train_labels).item()
+            msg = f"Train acc={train_acc:.4f} loss={train_loss:.4f} | {msg}"
+        print(msg)
     return acc, logits, embeddings

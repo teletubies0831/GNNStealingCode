@@ -84,15 +84,34 @@ def _build_model(model_name: str, in_feats: int, hidden_dim: int, num_classes: i
 def _load_target_model(args, data, n_classes, device):
     model_dir = Path(f"./target_model_{args.target_model}_{args.target_model_dim}")
     model_path = model_dir / f"target_model_{args.target_model}_{args.dataset}"
+    args_path = model_dir / "model_args"
+
+    target_hidden = args.target_model_dim
+    target_layers = args.num_layers
+    target_heads = args.head
+    target_dropout = args.dropout
+    if args_path.exists():
+        try:
+            saved_args = pickle.load(open(args_path, "rb"))
+            target_hidden = getattr(saved_args, "num_hidden", target_hidden)
+            target_layers = getattr(saved_args, "num_layers", target_layers)
+            target_heads = getattr(saved_args, "head", target_heads)
+            target_dropout = getattr(saved_args, "dropout", target_dropout)
+            print(
+                "[Attack] Loaded target model config from disk: "
+                f"hidden={target_hidden}, layers={target_layers}, heads={target_heads}, dropout={target_dropout}"
+            )
+        except Exception as exc:
+            print(f"[Attack] Warning: failed to load target model config ({exc}). Using attack config instead.")
 
     model = _build_model(
         args.target_model,
         data.num_features,
-        args.target_model_dim,
+        target_hidden,
         n_classes,
-        args.num_layers,
-        args.head,
-        args.dropout,
+        target_layers,
+        target_heads,
+        target_dropout,
     )
     model.load_state_dict(torch.load(model_path, map_location="cpu"))
     return model.to(device)

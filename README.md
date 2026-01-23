@@ -22,11 +22,11 @@ and **does not** list `torch-geometric` under `pip:` before recreating the envir
 
 ## Step 1: Train the target models
 
+Edit `code/train_config.json`, then run:
+
 ```
 cd code
-python train_target_model.py --dataset citeseer_full --target-model gat --num-hidden 256 --gpu -1
-
-# Note: use --gpu -1 for CPU.
+python train_target_model.py
 ```
 Note that we use the following datasets, target model architectures, and numbers of hidden neurons in our paper:
 ```
@@ -37,12 +37,10 @@ Note that we use the following datasets, target model architectures, and numbers
 
 ## Step 2: Conduct the model stealing attacks
 
-```
-# Type I attack:
-python attack.py --dataset citeseer_full --target-model-dim 256 --num-hidden 256 --target-model gat --surrogate-model gin --recovery-from prediction --query_ratio 1.0 --structure original --gpu -1
+Edit `code/attack_config.json`, then run:
 
-# Type II attack:
-python attack.py --dataset citeseer_full --target-model-dim 256 --num-hidden 256 --target-model gat --surrogate-model gin --recovery-from prediction --query_ratio 1.0 --structure idgl --gpu -1
+```
+python attack.py
 ```
 
 Explainations:

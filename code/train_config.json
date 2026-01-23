@@ -1,0 +1,12 @@
+{
+  "gpu": -1,
+  "target_model": "gat",
+  "dataset": "citeseer_full",
+  "num_epochs": 200,
+  "num_hidden": 256,
+  "num_layers": 3,
+  "lr": 0.001,
+  "dropout": 0.5,
+  "wd": 0.0,
+  "head": 4
+}

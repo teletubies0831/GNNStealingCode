@@ -52,7 +52,7 @@ Explainations:
 --surrogate-model:  ['gat', 'gin', 'sage']                                                      # Surrogate model's architecuture
 --recovery-from:    ['prediction', 'embedding', 'projection']                                   # Target model's response
 --query_ratio:      [0.1, 0.2, ..., 1.0]                                                        # Ratio of query graph used to train the surrogate model, e.g., 1.0 means we use the whole query graph (30% of the whole dataset); 0.5 means we use half of the query graph (15% of the whole dataset);
---structure:        ['original', 'idgl']                                                        # Type I/II attacks, 'original' means we use the original graph structure and 'idgl' means we use idgl to reconstruct the graph structure.
+--structure:        ['original', 'idgl']                                                        # Type I/II attacks, 'original' means we use the original graph structure and 'idgl' means we reconstruct the graph (Type II).
 ```
 
 

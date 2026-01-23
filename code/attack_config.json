@@ -16,6 +16,10 @@
   "query_ratio": 1.0,
   "structure": "original",
   "transform": "TSNE",
+  "idgl": {
+    "top_k": 10,
+    "iters": 3
+  },
   "logging": {
     "log_every": 10
   }

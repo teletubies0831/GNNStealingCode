@@ -18,7 +18,11 @@ from src.utils import (
     compute_fidelity,
     load_npz_graph,
     projection,
+    adjacency_stats,
+    relative_change,
+    similarity_matrix,
     split_graph_different_ratio,
+    sparse_from_similarity,
     train_detached_classifier,
 )
 
@@ -51,6 +55,10 @@ DEFAULT_CONFIG = {
     "logging": {
         "log_every": 10
     },
+    "idgl": {
+        "top_k": 10,
+        "iters": 3,
+    },
 }
 
 
@@ -62,6 +70,8 @@ def _load_config(config_path: Path) -> SimpleNamespace:
     merged = {**DEFAULT_CONFIG, **data}
     if "logging" in data:
         merged["logging"] = {**DEFAULT_CONFIG["logging"], **data["logging"]}
+    if "idgl" in data:
+        merged["idgl"] = {**DEFAULT_CONFIG["idgl"], **data["idgl"]}
     return SimpleNamespace(**merged)
 
 
@@ -176,16 +186,48 @@ def _train_surrogate(args, data, train_idx, query_logits, query_embeddings, devi
     return model
 
 
+def _reconstruct_graph_idgl(data, target_model, cfg, device):
+    top_k = int(cfg.idgl.get("top_k", 10))
+    iters = int(cfg.idgl.get("iters", 3))
+    edge_index = data.edge_index
+    print(f"[Attack] IDGL reconstruction: top_k={top_k}, iters={iters}")
+    prev_dense = None
+    for iteration in range(1, iters + 1):
+        target_model.eval()
+        with torch.no_grad():
+            _, embeddings = target_model(data.x, edge_index)
+        sim = similarity_matrix(embeddings)
+        new_edge_index = sparse_from_similarity(sim, top_k=top_k).to(device)
+        stats = adjacency_stats(new_edge_index, data.num_nodes)
+        if prev_dense is None:
+            change = float("inf")
+        else:
+            dense_next = torch.zeros_like(prev_dense)
+            dense_next[new_edge_index[0], new_edge_index[1]] = 1.0
+            change = relative_change(prev_dense, dense_next)
+            prev_dense = dense_next
+        if prev_dense is None:
+            prev_dense = torch.zeros((data.num_nodes, data.num_nodes), device=device)
+            prev_dense[new_edge_index[0], new_edge_index[1]] = 1.0
+        edge_index = new_edge_index
+        print(
+            f"[Attack][IDGL] iter={iteration}/{iters} avg_deg={stats.avg_degree:.2f} nnz={stats.nnz} change={change:.6f}"
+        )
+    data.edge_index = edge_index
+
+
 def main() -> None:
     args = _parse_args()
     config_path = Path(args.config) if args.config else Path(__file__).with_name("attack_config.json")
     cfg = _load_config(config_path)
-    if cfg.structure != "original":
-        print(f"[Attack] Warning: structure='{cfg.structure}' is ignored; using original graph structure.")
+    if cfg.structure not in ("original", "idgl"):
+        print(f"[Attack] Warning: unknown structure='{cfg.structure}', falling back to 'original'.")
+        cfg.structure = "original"
 
     device = _resolve_device(cfg.gpu)
 
-    print(f"[Attack] Loading dataset '{cfg.dataset}'.")
+    attack_type = "type2" if cfg.structure == "idgl" else "type1"
+    print(f"[Attack] Loading dataset '{cfg.dataset}' (attack={attack_type}, structure={cfg.structure}).")
     data, n_classes = load_npz_graph(cfg.dataset)
     train_idx, val_idx, test_idx = split_graph_different_ratio(
         data, frac_list=[0.3, 0.2, 0.5], ratio=cfg.query_ratio
@@ -195,6 +237,9 @@ def main() -> None:
 
     print(f"[Attack] Loading target model '{cfg.target_model}' from disk.")
     target_model = _load_target_model(cfg, data, n_classes, device)
+
+    if cfg.structure == "idgl":
+        _reconstruct_graph_idgl(data, target_model, cfg, device)
 
     if cfg.target_model == "gat":
         target_acc, target_logits, target_embeddings = evaluate_gat(target_model, data, train_idx, device)

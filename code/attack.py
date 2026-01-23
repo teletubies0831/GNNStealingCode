@@ -181,7 +181,7 @@ def main() -> None:
     config_path = Path(args.config) if args.config else Path(__file__).with_name("attack_config.json")
     cfg = _load_config(config_path)
     if cfg.structure != "original":
-        raise ValueError("Only 'original' structure is supported in the PyG refactor.")
+        print(f"[Attack] Warning: structure='{cfg.structure}' is ignored; using original graph structure.")
 
     device = _resolve_device(cfg.gpu)
 

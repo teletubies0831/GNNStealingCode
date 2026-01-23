@@ -1,5 +1,0 @@
-torch>=1.13
-torch-geometric>=2.3
-scikit-learn
-numpy<2
-matplotlib

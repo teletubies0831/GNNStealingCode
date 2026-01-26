@@ -39,6 +39,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--round_index", type=int, default=1)
     parser.add_argument("--query_ratio", type=float, default=1.0)
     parser.add_argument("--structure", type=str, default="original")
+    parser.add_argument("--structure_learner", type=str, default="knn")
+    parser.add_argument("--idgl-k", type=int, default=20)
+    parser.add_argument("--idgl-iters", type=int, default=5)
+    parser.add_argument("--use-labels", action="store_true")
     parser.add_argument("--transform", type=str, default="TSNE")
     args, _ = parser.parse_known_args()
     return args
@@ -135,8 +139,6 @@ def _train_surrogate(args, data, train_idx, query_logits, query_embeddings, devi
 
 def main() -> None:
     args = _parse_args()
-    if args.structure != "original":
-        raise ValueError("Only 'original' structure is supported in the PyG refactor.")
 
     device = _resolve_device(args.gpu)
 
@@ -144,6 +146,26 @@ def main() -> None:
     train_idx, val_idx, test_idx = split_graph_different_ratio(
         data, frac_list=[0.3, 0.2, 0.5], ratio=args.query_ratio
     )
+    if args.structure != "original":
+        from src.idgl import IDGLConfig, learn_graph_structure
+
+        if args.structure_learner not in {"knn", "idgl"}:
+            raise ValueError("structure_learner must be knn or idgl")
+        iters = 0 if args.structure_learner == "knn" else args.idgl_iters
+        config = IDGLConfig(k=args.idgl_k, iters=iters)
+        y_q = data.y if args.use_labels else None
+        learned_edge_index, learned_edge_weight = learn_graph_structure(
+            data.x,
+            y_q=y_q,
+            init="knn",
+            k=args.idgl_k,
+            iters=iters,
+            mode="inductive",
+            config=config,
+        )
+        data.edge_index = learned_edge_index
+        data.edge_weight = learned_edge_weight
+
     data = data.to(device)
 
     target_model = _load_target_model(args, data, n_classes, device)

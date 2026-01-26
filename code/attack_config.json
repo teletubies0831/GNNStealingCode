@@ -1,0 +1,26 @@
+{
+  "gpu": -1,
+  "dataset": "citeseer_full",
+  "num_epochs": 200,
+  "num_layers": 2,
+  "lr": 0.001,
+  "dropout": 0.5,
+  "head": 4,
+  "wd": 0.0,
+  "target_model": "gat",
+  "target_model_dim": 256,
+  "surrogate_model": "gin",
+  "num_hidden": 256,
+  "recovery_from": "prediction",
+  "round_index": 1,
+  "query_ratio": 1.0,
+  "structure": "original",
+  "transform": "TSNE",
+  "idgl": {
+    "top_k": 10,
+    "iters": 3
+  },
+  "logging": {
+    "log_every": 10
+  }
+}

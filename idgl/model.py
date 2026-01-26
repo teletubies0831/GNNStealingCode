@@ -34,26 +34,20 @@ class GNNEncoder(nn.Module):
 
     def __init__(self, in_dim: int, config: IDGLConfig) -> None:
         super().__init__()
-        # Choose between GCN and GraphSAGE based on config.
         if config.use_sage:
             self.conv1 = SAGEConv(in_dim, config.hidden_dim)
             self.conv2 = SAGEConv(config.hidden_dim, config.hidden_dim)
         else:
             self.conv1 = GCNConv(in_dim, config.hidden_dim)
             self.conv2 = GCNConv(config.hidden_dim, config.hidden_dim)
-        # Final linear layer maps embeddings to class logits.
         self.classifier = nn.Linear(config.hidden_dim, config.num_classes)
-        # Dropout applied between layers to avoid overfitting.
         self.dropout = config.dropout
 
     def forward(self, x: Tensor, edge_index: Tensor) -> tuple[Tensor, Tensor]:
-        # First message passing layer.
         x = self.conv1(x, edge_index)
         x = torch.relu(x)
         x = nn.functional.dropout(x, p=self.dropout, training=self.training)
-        # Second message passing layer to produce final embeddings.
         x = self.conv2(x, edge_index)
         x = torch.relu(x)
-        # Linear classifier for node labels.
         logits = self.classifier(x)
         return x, logits

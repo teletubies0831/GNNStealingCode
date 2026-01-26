@@ -22,11 +22,11 @@ and **does not** list `torch-geometric` under `pip:` before recreating the envir
 
 ## Step 1: Train the target models
 
+Edit `code/train_config.json`, then run:
+
 ```
 cd code
-python train_target_model.py --dataset citeseer_full --target-model gat --num-hidden 256 --gpu -1
-
-# Note: use --gpu -1 for CPU.
+python train_target_model.py
 ```
 Note that we use the following datasets, target model architectures, and numbers of hidden neurons in our paper:
 ```
@@ -37,12 +37,10 @@ Note that we use the following datasets, target model architectures, and numbers
 
 ## Step 2: Conduct the model stealing attacks
 
-```
-# Type I attack:
-python attack.py --dataset citeseer_full --target-model-dim 256 --num-hidden 256 --target-model gat --surrogate-model gin --recovery-from prediction --query_ratio 1.0 --structure original --gpu -1
+Edit `code/attack_config.json`, then run:
 
-# Type II attack:
-python attack.py --dataset citeseer_full --target-model-dim 256 --num-hidden 256 --target-model gat --surrogate-model gin --recovery-from prediction --query_ratio 1.0 --structure idgl --gpu -1
+```
+python attack.py
 ```
 
 Explainations:
@@ -54,7 +52,7 @@ Explainations:
 --surrogate-model:  ['gat', 'gin', 'sage']                                                      # Surrogate model's architecuture
 --recovery-from:    ['prediction', 'embedding', 'projection']                                   # Target model's response
 --query_ratio:      [0.1, 0.2, ..., 1.0]                                                        # Ratio of query graph used to train the surrogate model, e.g., 1.0 means we use the whole query graph (30% of the whole dataset); 0.5 means we use half of the query graph (15% of the whole dataset);
---structure:        ['original', 'idgl']                                                        # Type I/II attacks, 'original' means we use the original graph structure and 'idgl' means we use idgl to reconstruct the graph structure.
+--structure:        ['original', 'idgl']                                                        # Type I/II attacks, 'original' means we use the original graph structure and 'idgl' means we reconstruct the graph (Type II).
 ```
 
 

@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import argparse
+import json
 import pickle
 from pathlib import Path
+from types import SimpleNamespace
 
 import torch
 import torch.nn.functional as F
@@ -16,32 +18,61 @@ from src.utils import (
     compute_fidelity,
     load_npz_graph,
     projection,
+    adjacency_stats,
+    relative_change,
+    similarity_matrix,
     split_graph_different_ratio,
+    sparse_from_similarity,
     train_detached_classifier,
 )
 
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser("Model stealing for inductive GNNs (PyG)")
-    parser.add_argument("--gpu", type=int, default=-1, help="GPU device ID, -1 for CPU")
-    parser.add_argument("--dataset", type=str, default="citeseer_full")
-    parser.add_argument("--num-epochs", type=int, default=200)
-    parser.add_argument("--num-layers", type=int, default=2)
-    parser.add_argument("--lr", type=float, default=0.001)
-    parser.add_argument("--dropout", type=float, default=0.5)
-    parser.add_argument("--head", type=int, default=4)
-    parser.add_argument("--wd", type=float, default=0)
-    parser.add_argument("--target-model", type=str, default="sage")
-    parser.add_argument("--target-model-dim", type=int, default=256)
-    parser.add_argument("--surrogate-model", type=str, default="sage")
-    parser.add_argument("--num-hidden", type=int, default=256)
-    parser.add_argument("--recovery-from", type=str, default="embedding")
-    parser.add_argument("--round_index", type=int, default=1)
-    parser.add_argument("--query_ratio", type=float, default=1.0)
-    parser.add_argument("--structure", type=str, default="original")
-    parser.add_argument("--transform", type=str, default="TSNE")
+    parser.add_argument("--config", type=str, default=None, help="Path to JSON config file.")
     args, _ = parser.parse_known_args()
     return args
+
+
+DEFAULT_CONFIG = {
+    "gpu": -1,
+    "dataset": "citeseer_full",
+    "num_epochs": 200,
+    "num_layers": 2,
+    "lr": 0.001,
+    "dropout": 0.5,
+    "head": 4,
+    "wd": 0.0,
+    "target_model": "sage",
+    "target_model_dim": 256,
+    "surrogate_model": "sage",
+    "num_hidden": 256,
+    "recovery_from": "embedding",
+    "round_index": 1,
+    "query_ratio": 1.0,
+    "structure": "original",
+    "transform": "TSNE",
+    "logging": {
+        "log_every": 10
+    },
+    "idgl": {
+        "top_k": 10,
+        "iters": 3,
+    },
+}
+
+
+def _load_config(config_path: Path) -> SimpleNamespace:
+    if not config_path.exists():
+        raise FileNotFoundError(f"Config file not found: {config_path}")
+    with config_path.open("r", encoding="utf-8") as handle:
+        data = json.load(handle)
+    merged = {**DEFAULT_CONFIG, **data}
+    if "logging" in data:
+        merged["logging"] = {**DEFAULT_CONFIG["logging"], **data["logging"]}
+    if "idgl" in data:
+        merged["idgl"] = {**DEFAULT_CONFIG["idgl"], **data["idgl"]}
+    return SimpleNamespace(**merged)
 
 
 def _resolve_device(gpu_id: int) -> torch.device:
@@ -63,15 +94,34 @@ def _build_model(model_name: str, in_feats: int, hidden_dim: int, num_classes: i
 def _load_target_model(args, data, n_classes, device):
     model_dir = Path(f"./target_model_{args.target_model}_{args.target_model_dim}")
     model_path = model_dir / f"target_model_{args.target_model}_{args.dataset}"
+    args_path = model_dir / "model_args"
+
+    target_hidden = args.target_model_dim
+    target_layers = args.num_layers
+    target_heads = args.head
+    target_dropout = args.dropout
+    if args_path.exists():
+        try:
+            saved_args = pickle.load(open(args_path, "rb"))
+            target_hidden = getattr(saved_args, "num_hidden", target_hidden)
+            target_layers = getattr(saved_args, "num_layers", target_layers)
+            target_heads = getattr(saved_args, "head", target_heads)
+            target_dropout = getattr(saved_args, "dropout", target_dropout)
+            print(
+                "[Attack] Loaded target model config from disk: "
+                f"hidden={target_hidden}, layers={target_layers}, heads={target_heads}, dropout={target_dropout}"
+            )
+        except Exception as exc:
+            print(f"[Attack] Warning: failed to load target model config ({exc}). Using attack config instead.")
 
     model = _build_model(
         args.target_model,
         data.num_features,
-        args.target_model_dim,
+        target_hidden,
         n_classes,
-        args.num_layers,
-        args.head,
-        args.dropout,
+        target_layers,
+        target_heads,
+        target_dropout,
     )
     model.load_state_dict(torch.load(model_path, map_location="cpu"))
     return model.to(device)
@@ -91,7 +141,8 @@ def _train_surrogate(args, data, train_idx, query_logits, query_embeddings, devi
     config = GATConfig(args.num_epochs, args.lr, args.wd, args.dropout)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
 
-    for _ in range(config.num_epochs):
+    log_every = max(1, int(args.logging.get("log_every", 10)))
+    for epoch in range(1, config.num_epochs + 1):
         model.train()
         optimizer.zero_grad()
         logits, embeddings = model(data.x, data.edge_index)
@@ -129,54 +180,100 @@ def _train_surrogate(args, data, train_idx, query_logits, query_embeddings, devi
 
         loss.backward()
         optimizer.step()
+        if epoch == 1 or epoch % log_every == 0 or epoch == config.num_epochs:
+            print(f"[Attack] Surrogate training epoch {epoch}/{config.num_epochs} loss={loss.item():.4f}")
 
     return model
 
 
+def _reconstruct_graph_idgl(data, target_model, cfg, device):
+    top_k = int(cfg.idgl.get("top_k", 10))
+    iters = int(cfg.idgl.get("iters", 3))
+    edge_index = data.edge_index
+    print(f"[Attack] IDGL reconstruction: top_k={top_k}, iters={iters}")
+    prev_dense = None
+    for iteration in range(1, iters + 1):
+        target_model.eval()
+        with torch.no_grad():
+            _, embeddings = target_model(data.x, edge_index)
+        sim = similarity_matrix(embeddings)
+        new_edge_index = sparse_from_similarity(sim, top_k=top_k).to(device)
+        stats = adjacency_stats(new_edge_index, data.num_nodes)
+        if prev_dense is None:
+            change = float("inf")
+        else:
+            dense_next = torch.zeros_like(prev_dense)
+            dense_next[new_edge_index[0], new_edge_index[1]] = 1.0
+            change = relative_change(prev_dense, dense_next)
+            prev_dense = dense_next
+        if prev_dense is None:
+            prev_dense = torch.zeros((data.num_nodes, data.num_nodes), device=device)
+            prev_dense[new_edge_index[0], new_edge_index[1]] = 1.0
+        edge_index = new_edge_index
+        print(
+            f"[Attack][IDGL] iter={iteration}/{iters} avg_deg={stats.avg_degree:.2f} nnz={stats.nnz} change={change:.6f}"
+        )
+    data.edge_index = edge_index
+
+
 def main() -> None:
     args = _parse_args()
-    if args.structure != "original":
-        raise ValueError("Only 'original' structure is supported in the PyG refactor.")
+    config_path = Path(args.config) if args.config else Path(__file__).with_name("attack_config.json")
+    cfg = _load_config(config_path)
+    if cfg.structure not in ("original", "idgl"):
+        print(f"[Attack] Warning: unknown structure='{cfg.structure}', falling back to 'original'.")
+        cfg.structure = "original"
 
-    device = _resolve_device(args.gpu)
+    device = _resolve_device(cfg.gpu)
 
-    data, n_classes = load_npz_graph(args.dataset)
+    attack_type = "type2" if cfg.structure == "idgl" else "type1"
+    print(f"[Attack] Loading dataset '{cfg.dataset}' (attack={attack_type}, structure={cfg.structure}).")
+    data, n_classes = load_npz_graph(cfg.dataset)
     train_idx, val_idx, test_idx = split_graph_different_ratio(
-        data, frac_list=[0.3, 0.2, 0.5], ratio=args.query_ratio
+        data, frac_list=[0.3, 0.2, 0.5], ratio=cfg.query_ratio
     )
+    print(f"[Attack] Split sizes -> query: {len(train_idx)}, val: {len(val_idx)}, test: {len(test_idx)}")
     data = data.to(device)
 
-    target_model = _load_target_model(args, data, n_classes, device)
+    print(f"[Attack] Loading target model '{cfg.target_model}' from disk.")
+    target_model = _load_target_model(cfg, data, n_classes, device)
 
-    if args.target_model == "gat":
-        _, target_logits, target_embeddings = evaluate_gat(target_model, data, train_idx, device)
-    elif args.target_model == "gin":
-        _, target_logits, target_embeddings = evaluate_gin(target_model, data, train_idx, device)
+    if cfg.structure == "idgl":
+        _reconstruct_graph_idgl(data, target_model, cfg, device)
+
+    if cfg.target_model == "gat":
+        target_acc, target_logits, target_embeddings = evaluate_gat(target_model, data, train_idx, device)
+    elif cfg.target_model == "gin":
+        target_acc, target_logits, target_embeddings = evaluate_gin(target_model, data, train_idx, device)
     else:
-        _, target_logits, target_embeddings = evaluate_sage(target_model, data, train_idx, device)
+        target_acc, target_logits, target_embeddings = evaluate_sage(target_model, data, train_idx, device)
+    print(f"[Attack] Target model query accuracy={float(target_acc):.4f}")
 
     target_logits = target_logits[train_idx].detach()
     target_embeddings = target_embeddings[train_idx].detach()
 
-    surrogate_model = _train_surrogate(args, data, train_idx, target_logits, target_embeddings, device)
+    print(f"[Attack] Training surrogate model '{cfg.surrogate_model}'.")
+    surrogate_model = _train_surrogate(cfg, data, train_idx, target_logits, target_embeddings, device)
 
-    if args.surrogate_model == "gat":
-        _, surrogate_logits, surrogate_embeddings = evaluate_gat(surrogate_model, data, test_idx, device)
-    elif args.surrogate_model == "gin":
-        _, surrogate_logits, surrogate_embeddings = evaluate_gin(surrogate_model, data, test_idx, device)
+    if cfg.surrogate_model == "gat":
+        surrogate_acc, surrogate_logits, surrogate_embeddings = evaluate_gat(surrogate_model, data, test_idx, device)
+    elif cfg.surrogate_model == "gin":
+        surrogate_acc, surrogate_logits, surrogate_embeddings = evaluate_gin(surrogate_model, data, test_idx, device)
     else:
-        _, surrogate_logits, surrogate_embeddings = evaluate_sage(surrogate_model, data, test_idx, device)
+        surrogate_acc, surrogate_logits, surrogate_embeddings = evaluate_sage(surrogate_model, data, test_idx, device)
+    print(f"[Attack] Surrogate test accuracy={float(surrogate_acc):.4f}")
 
     detached_classifier = train_detached_classifier(data.y[test_idx], surrogate_embeddings[test_idx])
     detached_acc = detached_classifier.score(
         surrogate_embeddings[test_idx].detach().cpu().numpy(),
         data.y[test_idx].cpu().numpy(),
     )
+    print(f"[Attack] Detached classifier accuracy={detached_acc:.4f}")
     detached_preds = detached_classifier.predict_proba(surrogate_embeddings[test_idx].detach().cpu().numpy())
 
-    if args.target_model == "gat":
+    if cfg.target_model == "gat":
         _, target_test_logits, _ = evaluate_gat(target_model, data, test_idx, device)
-    elif args.target_model == "gin":
+    elif cfg.target_model == "gin":
         _, target_test_logits, _ = evaluate_gin(target_model, data, test_idx, device)
     else:
         _, target_test_logits, _ = evaluate_sage(target_model, data, test_idx, device)
@@ -185,14 +282,17 @@ def main() -> None:
         torch.from_numpy(detached_preds).to(device),
         target_test_logits[test_idx].to(device),
     )
+    print(f"[Attack] Fidelity={fidelity:.4f}")
 
-    output_folder = Path("./results_acc_fidelity") / f"results_{args.target_model}_{args.target_model_dim}_{args.surrogate_model}_{args.num_hidden}"
+    output_folder = Path("./results_acc_fidelity") / (
+        f"results_{cfg.target_model}_{cfg.target_model_dim}_{cfg.surrogate_model}_{cfg.num_hidden}"
+    )
     output_folder.mkdir(parents=True, exist_ok=True)
-    filename = output_folder / f"{args.dataset}_original.txt"
+    filename = output_folder / f"{cfg.dataset}_original.txt"
     with filename.open("a") as handle:
         handle.write(
-            f"{args.target_model},{args.target_model_dim},{args.surrogate_model},{args.num_hidden},"
-            f"{args.recovery_from},{args.round_index},{args.query_ratio},"
+            f"{cfg.target_model},{cfg.target_model_dim},{cfg.surrogate_model},{cfg.num_hidden},"
+            f"{cfg.recovery_from},{cfg.round_index},{cfg.query_ratio},"
             f"{detached_acc},{detached_acc},{fidelity}\n"
         )
 

@@ -114,6 +114,113 @@ Example `source_list.csv` format:
 ./target_model_gin_256/target_model_gin_citeseer_full,gin,256,2,4,0.5
 ```
 
+### One-click pipeline (JSON config)
+
+You can run the full training → stealing → fingerprinting → verification flow using a single
+launcher script with a JSON configuration file:
+
+```
+python scripts/run_gnnfingers_pipeline.py --config ./pipeline_config.json
+```
+
+Example `pipeline_config.json` (all step parameters are passed as JSON):
+
+```
+{
+  "suspect_list": {
+    "path": "./suspect_list.csv",
+    "rows": [
+      ["surrogate", "./surrogate_models/surrogate_gin_citeseer_full.pt", "gin", 256, 2, 4, 0.5, 1],
+      ["neg_1", "./negative_models/neg_gat.pt", "gat", 256, 2, 4, 0.5, 0]
+    ]
+  },
+  "source_list": {
+    "path": "./source_list.csv",
+    "rows": [
+      ["./target_model_gat_256/target_model_gat_citeseer_full", "gat", 256, 2, 4, 0.5]
+    ]
+  },
+  "steps": [
+    {
+      "name": "train_target",
+      "script": "train_target_model.py",
+      "args": {
+        "dataset": "citeseer_full",
+        "target_model": "gat",
+        "num_hidden": 256,
+        "num_layers": 2,
+        "gpu": -1
+      }
+    },
+    {
+      "name": "steal_gnn",
+      "script": "attack.py",
+      "args": {
+        "dataset": "citeseer_full",
+        "target_model_dim": 256,
+        "num_hidden": 256,
+        "target_model": "gat",
+        "surrogate_model": "gin",
+        "recovery_from": "prediction",
+        "query_ratio": 1.0,
+        "structure": "original",
+        "save_surrogate": true,
+        "gpu": -1
+      }
+    },
+    {
+      "name": "build_fingerprints",
+      "script": "scripts/build_fingerprints.py",
+      "args": {
+        "dataset": "citeseer_full",
+        "source_model": "gat",
+        "source_model_dir": "./target_model_gat_256",
+        "output_dir": "./fingerprints",
+        "mode": "embedding"
+      }
+    },
+    {
+      "name": "compute_source_scores",
+      "script": "scripts/compute_source_scores.py",
+      "args": {
+        "dataset": "citeseer_full",
+        "fingerprints": "./fingerprints",
+        "source_list": "./source_list.csv",
+        "mode": "embedding",
+        "output": "./source_scores.txt"
+      }
+    },
+    {
+      "name": "verify_ownership",
+      "script": "scripts/verify_ownership.py",
+      "args": {
+        "dataset": "citeseer_full",
+        "fingerprints": "./fingerprints",
+        "suspect_ckpt": "./surrogate_models/surrogate_gin_citeseer_full.pt",
+        "suspect_model": "gin",
+        "suspect_hidden": 256,
+        "suspect_layers": 2,
+        "suspect_heads": 4,
+        "suspect_dropout": 0.5,
+        "mode": "embedding",
+        "source_aggregates": "./source_scores.txt"
+      }
+    },
+    {
+      "name": "eval_report",
+      "script": "scripts/eval_gnnfingers_on_stealgnn.py",
+      "args": {
+        "dataset": "citeseer_full",
+        "fingerprints": "./fingerprints",
+        "suspect_list": "./suspect_list.csv",
+        "mode": "embedding",
+        "output_csv": "./gnnfingers_report.csv"
+      }
+    }
+  ]
+}
+```
+
 ### Evaluation script
 
 Prepare a CSV-like file listing suspects for evaluation (one line per model):

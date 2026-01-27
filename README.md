@@ -123,6 +123,17 @@ launcher script with a JSON configuration file:
 python scripts/run_gnnfingers_pipeline.py --config ./pipeline_config.json
 ```
 
+### One-click pipeline (no CLI args)
+
+If you want a single script you can launch directly in PyCharm (no command-line flags), run:
+
+```
+python run_full_pipeline.py
+```
+
+This script lives next to `attack.py` and `train_target_model.py` and executes the full end-to-end
+flow with defaults defined inside the file.
+
 Example `pipeline_config.json` (all step parameters are passed as JSON):
 
 ```

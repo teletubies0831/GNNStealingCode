@@ -1,23 +1,21 @@
-"""GNNFingers ownership verification package."""
+"""GNNFingers ownership verification framework."""
 
-from .fingerprint_builder import FingerprintConfig, build_fingerprint_queries
-from .io import load_fingerprints, save_fingerprints
-from .response_encoder import encode_response
-from .verifier import (
-    OwnershipScore,
-    OwnershipVerifier,
-    VerificationConfig,
-    VerificationResult,
-)
+from .fingerprints import GraphFingerprintSet
+from .joint_train import train_gnnfingers
+from .obfuscation import prepare_model_ensemble
+from .univerifier import UniverifierMLP
+from .utils import flatten_outputs, load_config, save_config
+from .wrappers import HttpSuspectWrapper, LocalPyGSuspectWrapper, SuspectModelWrapper
 
 __all__ = [
-    "FingerprintConfig",
-    "OwnershipScore",
-    "OwnershipVerifier",
-    "VerificationConfig",
-    "VerificationResult",
-    "build_fingerprint_queries",
-    "encode_response",
-    "load_fingerprints",
-    "save_fingerprints",
+    "GraphFingerprintSet",
+    "HttpSuspectWrapper",
+    "LocalPyGSuspectWrapper",
+    "SuspectModelWrapper",
+    "UniverifierMLP",
+    "flatten_outputs",
+    "load_config",
+    "prepare_model_ensemble",
+    "save_config",
+    "train_gnnfingers",
 ]

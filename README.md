@@ -41,8 +41,8 @@ Note that we use the following datasets, target model architectures, and numbers
 # Type I attack:
 python attack.py --dataset citeseer_full --target-model-dim 256 --num-hidden 256 --target-model gat --surrogate-model gin --recovery-from prediction --query_ratio 1.0 --structure original --gpu -1
 
-# Type II attack:
-python attack.py --dataset citeseer_full --target-model-dim 256 --num-hidden 256 --target-model gat --surrogate-model gin --recovery-from prediction --query_ratio 1.0 --structure idgl --gpu -1
+# Save the surrogate for downstream verification:
+python attack.py --dataset citeseer_full --target-model-dim 256 --num-hidden 256 --target-model gat --surrogate-model gin --recovery-from prediction --query_ratio 1.0 --structure original --save-surrogate --gpu -1
 ```
 
 Explainations:
@@ -54,7 +54,8 @@ Explainations:
 --surrogate-model:  ['gat', 'gin', 'sage']                                                      # Surrogate model's architecuture
 --recovery-from:    ['prediction', 'embedding', 'projection']                                   # Target model's response
 --query_ratio:      [0.1, 0.2, ..., 1.0]                                                        # Ratio of query graph used to train the surrogate model, e.g., 1.0 means we use the whole query graph (30% of the whole dataset); 0.5 means we use half of the query graph (15% of the whole dataset);
---structure:        ['original', 'idgl']                                                        # Type I/II attacks, 'original' means we use the original graph structure and 'idgl' means we use idgl to reconstruct the graph structure.
+--structure:        ['original']                                                                # Type I attacks using the original graph structure.
+--save-surrogate:   Save the surrogate checkpoint for downstream verification.
 ```
 
 
@@ -65,7 +66,85 @@ Explainations:
     - The first part consists of 20\% randomly sampled nodes that are left;
     - The second part consists of 30\% randomly sampled nodes, forming our query graph $\mathbf{G}_Q$.
     - The third part consists of the rest 50\% of the nodes, functioning as the testing data for both $\mathcal{M}_T$ and $\mathcal{M}_S$.
-3. We follow the official IDGL implementation from [IDGL](https://github.com/hugochan/IDGL).
+3. We follow the official IDGL implementation from [IDGL](https://github.com/hugochan/IDGL). The core IDGL module lives in `code/core/idgl.py`.
+
+## GNNFingers Ownership Verification
+
+This repository includes a **GNNFingers-style ownership verification** pipeline to determine
+whether a suspect model is stolen from a source model. The verification is based on **fingerprint
+queries** (small subgraphs with motif + feature triggers) and **response similarity** between
+source and suspect models. This defense is intended for **attribution**, not preventing theft.
+
+### Minimal end-to-end example
+
+From the repository root:
+
+```
+# 1) Train a source model.
+cd code
+python train_target_model.py --dataset citeseer_full --target-model gat --num-hidden 256 --gpu -1
+
+# 2) Run StealGNN to obtain a surrogate model checkpoint.
+python attack.py --dataset citeseer_full --target-model-dim 256 --num-hidden 256 --target-model gat \
+  --surrogate-model gin --recovery-from prediction --query_ratio 1.0 --structure original --save-surrogate --gpu -1
+
+# 3) Build fingerprint queries and source signatures.
+python scripts/build_fingerprints.py --dataset citeseer_full --source-model gat \
+  --source-model-dir ./target_model_gat_256 --output-dir ./fingerprints --mode embedding
+
+# 4) Verify a suspect model (e.g., the surrogate).
+python scripts/verify_ownership.py --dataset citeseer_full --fingerprints ./fingerprints \
+  --suspect-ckpt ./surrogate_models/surrogate_gin_citeseer_full.pt --suspect-model gin \
+  --suspect-hidden 256 --suspect-layers 2 --suspect-heads 4 --suspect-dropout 0.5 --mode embedding \
+  --source-aggregates ./source_scores.txt
+```
+
+To build the one-class threshold file (`source_scores.txt`), train multiple source models with
+different random seeds and run:
+
+```
+python scripts/compute_source_scores.py --dataset citeseer_full --fingerprints ./fingerprints \
+  --source-list ./source_list.csv --mode embedding --output ./source_scores.txt
+```
+
+Example `source_list.csv` format:
+
+```
+./target_model_gat_256/target_model_gat_citeseer_full,gat,256,2,4,0.5
+./target_model_gin_256/target_model_gin_citeseer_full,gin,256,2,4,0.5
+```
+
+### Evaluation script
+
+Prepare a CSV-like file listing suspects for evaluation (one line per model):
+
+```
+surrogate,./surrogate_models/surrogate_gin_citeseer_full.pt,gin,256,2,4,0.5,1
+neg_1,./negative_models/neg_gat.pt,gat,256,2,4,0.5,0
+```
+
+Then run:
+
+```
+python scripts/eval_gnnfingers_on_stealgnn.py --dataset citeseer_full --fingerprints ./fingerprints \
+  --suspect-list ./suspect_list.csv --mode embedding --output-csv ./gnnfingers_report.csv
+```
+
+The output CSV includes per-model scores, labels, and verdicts. The script also prints AUC/TPR when
+labels include both positives and negatives.
+
+### Design details
+
+- **Anchor selection:** by default, anchors are sampled uniformly at random. You can switch to
+  high-degree anchors via `FingerprintConfig.anchor_strategy = "high_degree"` in
+  `gnnfingers/fingerprint_builder.py`.
+- **Subgraph queries:** for node classification, each anchor yields a `k`-hop induced subgraph.
+  Motifs and trigger features are injected into this subgraph while preserving the original
+  feature dimensionality, so it stays compatible with PyG `Data` inputs.
+- **Robustness intuition:** ownership verification compares **response consistency** on the
+  fingerprint queries rather than matching parameters. This makes it more robust to fine-tuning,
+  distillation, or architecture changes, because stolen models are trained to mimic the source
+  model’s behavior on query inputs.
 
 
 ## Cite

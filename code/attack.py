@@ -39,10 +39,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--round_index", type=int, default=1)
     parser.add_argument("--query_ratio", type=float, default=1.0)
     parser.add_argument("--structure", type=str, default="original")
-    parser.add_argument("--structure_learner", type=str, default="knn")
-    parser.add_argument("--idgl-k", type=int, default=20)
-    parser.add_argument("--idgl-iters", type=int, default=5)
-    parser.add_argument("--use-labels", action="store_true")
+    parser.add_argument("--save-surrogate", action="store_true", help="Save surrogate checkpoint after training")
+    parser.add_argument("--surrogate-save-dir", type=str, default="./surrogate_models")
     parser.add_argument("--transform", type=str, default="TSNE")
     args, _ = parser.parse_known_args()
     return args
@@ -147,24 +145,7 @@ def main() -> None:
         data, frac_list=[0.3, 0.2, 0.5], ratio=args.query_ratio
     )
     if args.structure != "original":
-        from src.idgl import IDGLConfig, learn_graph_structure
-
-        if args.structure_learner not in {"knn", "idgl"}:
-            raise ValueError("structure_learner must be knn or idgl")
-        iters = 0 if args.structure_learner == "knn" else args.idgl_iters
-        config = IDGLConfig(k=args.idgl_k, iters=iters)
-        y_q = data.y if args.use_labels else None
-        learned_edge_index, learned_edge_weight = learn_graph_structure(
-            data.x,
-            y_q=y_q,
-            init="knn",
-            k=args.idgl_k,
-            iters=iters,
-            mode="inductive",
-            config=config,
-        )
-        data.edge_index = learned_edge_index
-        data.edge_weight = learned_edge_weight
+        raise ValueError("Only 'original' structure is supported in the PyG refactor.")
 
     data = data.to(device)
 
@@ -181,6 +162,11 @@ def main() -> None:
     target_embeddings = target_embeddings[train_idx].detach()
 
     surrogate_model = _train_surrogate(args, data, train_idx, target_logits, target_embeddings, device)
+    if args.save_surrogate:
+        output_dir = Path(args.surrogate_save_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        surrogate_path = output_dir / f"surrogate_{args.surrogate_model}_{args.dataset}.pt"
+        torch.save(surrogate_model.state_dict(), surrogate_path)
 
     if args.surrogate_model == "gat":
         _, surrogate_logits, surrogate_embeddings = evaluate_gat(surrogate_model, data, test_idx, device)

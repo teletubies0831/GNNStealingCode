@@ -1,4 +1,4 @@
-"""IDGL-style graph structure learning for GNNStealing."""
+"""IDGL-style graph structure learning utilities (core module)."""
 
 from __future__ import annotations
 

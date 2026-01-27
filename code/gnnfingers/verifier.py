@@ -73,6 +73,19 @@ def _compute_similarity(a: torch.Tensor, b: torch.Tensor, mode: str) -> torch.Te
     raise ValueError("similarity must be cosine or l2.")
 
 
+def _align_signatures(
+    source: torch.Tensor,
+    suspect: torch.Tensor,
+) -> Tuple[torch.Tensor, torch.Tensor]:
+    """Align signature dimensions by truncating to the minimum embedding size."""
+    if source.shape[0] != suspect.shape[0]:
+        raise ValueError("Signature query counts must match.")
+    if source.shape[1] == suspect.shape[1]:
+        return source, suspect
+    target_dim = min(source.shape[1], suspect.shape[1])
+    return source[:, :target_dim], suspect[:, :target_dim]
+
+
 class OwnershipVerifier:
     """Ownership verification with adaptive or one-class thresholds."""
 
@@ -98,9 +111,8 @@ class OwnershipVerifier:
         return torch.stack(responses, dim=0)
 
     def score_signatures(self, source: torch.Tensor, suspect: torch.Tensor) -> OwnershipScore:
-        if source.shape != suspect.shape:
-            raise ValueError("Signature shapes must match.")
-        scores = _compute_similarity(source, suspect, self.config.similarity)
+        source_aligned, suspect_aligned = _align_signatures(source, suspect)
+        scores = _compute_similarity(source_aligned, suspect_aligned, self.config.similarity)
         aggregate = scores.mean().item()
         return OwnershipScore(scores=scores, aggregate=aggregate)
 

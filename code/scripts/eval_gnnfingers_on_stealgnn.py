@@ -2,8 +2,12 @@
 
 from __future__ import annotations
 
-import argparse
+import sys
 from pathlib import Path
+
+sys.path.append(str(Path(__file__).resolve().parents[1]))
+
+import argparse
 from typing import List, Tuple
 
 import numpy as np

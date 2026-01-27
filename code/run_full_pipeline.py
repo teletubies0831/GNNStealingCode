@@ -2,7 +2,10 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
+
+sys.path.append(str(Path(__file__).resolve().parent))
 
 from scripts.run_gnnfingers_pipeline import _build_args, _run_step, _write_csv
 

@@ -63,6 +63,7 @@ Explainations:
     - The first part consists of 20\% randomly sampled nodes that are left;
     - The second part consists of 30\% randomly sampled nodes, forming our query graph $\mathbf{G}_Q$.
     - The third part consists of the rest 50\% of the nodes, functioning as the testing data for both $\mathcal{M}_T$ and $\mathcal{M}_S$.
+3. The IDGL reference implementation is not bundled in this repository.
 ## Cite
 
 If you use this code, please consider citing the following papers:

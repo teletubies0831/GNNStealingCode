@@ -4,7 +4,7 @@ This is a PyTorch implementation of Model Stealing Attacks Against Inductive Gra
 
 Yun Shen, Xinlei He, Yufei Han, Yang Zhang, [Model Stealing Attacks Against Inductive Graph Neural Networks](https://arxiv.org/abs/2112.08331) (IEEE S&P 2022)
 
-## Step 0: Setup the environment (PyTorch Geometric, CPU-only)
+## Step 0: Setup the environment (PyTorch Geometric, CUDA)
 
 From the repository root:
 
@@ -13,7 +13,7 @@ conda env create --file environment.yaml
 conda activate gnn_model_stealing
 ```
 
-This environment installs **PyTorch Geometric (PyG)** and all required dependencies for CPU-only
+This environment installs **PyTorch Geometric (PyG)** with CUDA support for GPU-accelerated
 training and attacks. No GraphGallery or DGL setup is needed.
 
 If you see pip attempting to build `torch-geometric` from source, it means you are using an
@@ -26,7 +26,7 @@ and **does not** list `torch-geometric` under `pip:` before recreating the envir
 cd code
 python train_target_model.py --dataset citeseer_full --target-model gat --num-hidden 256 --gpu -1
 
-# Note: use --gpu -1 for CPU.
+# Note: use --gpu 0 for GPU, or --gpu -1 for CPU.
 ```
 Note that we use the following datasets, target model architectures, and numbers of hidden neurons in our paper:
 ```
@@ -41,8 +41,6 @@ Note that we use the following datasets, target model architectures, and numbers
 # Type I attack:
 python attack.py --dataset citeseer_full --target-model-dim 256 --num-hidden 256 --target-model gat --surrogate-model gin --recovery-from prediction --query_ratio 1.0 --structure original --gpu -1
 
-# Type II attack:
-python attack.py --dataset citeseer_full --target-model-dim 256 --num-hidden 256 --target-model gat --surrogate-model gin --recovery-from prediction --query_ratio 1.0 --structure idgl --gpu -1
 ```
 
 Explainations:
@@ -54,7 +52,7 @@ Explainations:
 --surrogate-model:  ['gat', 'gin', 'sage']                                                      # Surrogate model's architecuture
 --recovery-from:    ['prediction', 'embedding', 'projection']                                   # Target model's response
 --query_ratio:      [0.1, 0.2, ..., 1.0]                                                        # Ratio of query graph used to train the surrogate model, e.g., 1.0 means we use the whole query graph (30% of the whole dataset); 0.5 means we use half of the query graph (15% of the whole dataset);
---structure:        ['original', 'idgl']                                                        # Type I/II attacks, 'original' means we use the original graph structure and 'idgl' means we use idgl to reconstruct the graph structure.
+--structure:        ['original']                                                                # Type I attack only (PyG refactor supports original graph structure).
 ```
 
 
@@ -65,9 +63,7 @@ Explainations:
     - The first part consists of 20\% randomly sampled nodes that are left;
     - The second part consists of 30\% randomly sampled nodes, forming our query graph $\mathbf{G}_Q$.
     - The third part consists of the rest 50\% of the nodes, functioning as the testing data for both $\mathcal{M}_T$ and $\mathcal{M}_S$.
-3. We follow the official IDGL implementation from [IDGL](https://github.com/hugochan/IDGL).
-
-
+3. The IDGL reference implementation is not bundled in this repository.
 ## Cite
 
 If you use this code, please consider citing the following papers:

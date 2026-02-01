@@ -16,7 +16,7 @@ from src.utils import load_npz_graph, split_graph
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser("Target model training (PyG)")
-    parser.add_argument("--gpu", type=int, default=-1, help="GPU device ID, -1 for CPU")
+    parser.add_argument("--gpu", type=int, default=0, help="GPU device ID, -1 for CPU")
     parser.add_argument("--target-model", type=str, default="gat")
     parser.add_argument(
         "--dataset",
@@ -24,13 +24,13 @@ def _parse_args() -> argparse.Namespace:
         default="dblp",
         help="['dblp', 'pubmed', 'citeseer_full', 'coauthor_phy', 'acm', 'amazon_photo']",
     )
-    parser.add_argument("--num-epochs", type=int, default=200)
-    parser.add_argument("--num-hidden", type=int, default=256)
-    parser.add_argument("--num-layers", type=int, default=3)
+    parser.add_argument("--num-epochs", type=int, default=100)
+    parser.add_argument("--num-hidden", type=int, default=128)
+    parser.add_argument("--num-layers", type=int, default=2)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--dropout", type=float, default=0.5)
     parser.add_argument("--wd", type=float, default=0)
-    parser.add_argument("--head", type=int, default=4)
+    parser.add_argument("--head", type=int, default=2)
     args, _ = parser.parse_known_args()
     return args
 

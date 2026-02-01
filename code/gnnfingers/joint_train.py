@@ -21,6 +21,8 @@ class JointTrainConfig:
     iterations: int = 1000
     lr: float = 0.001
     top_k: int = 20
+    feature_lr: float = 0.1
+    adj_lr: float = 1.0
     feature_clip_min: float = -1.0
     feature_clip_max: float = 1.0
     task_type: str = "node_classification"
@@ -55,7 +57,7 @@ def train_gnnfingers(
     pos_wrappers = [LocalPyGSuspectWrapper(model, device, task_type=config.task_type) for model in pos_models]
     neg_wrappers = [LocalPyGSuspectWrapper(model, device, task_type=config.task_type) for model in neg_models]
 
-    history = {"loss": [], "edge_updates": []}
+    history = {"loss": [], "accuracy": [], "edge_updates": []}
 
     for step in range(config.iterations):
         graphs = fingerprint_set.build_graphs()
@@ -84,15 +86,20 @@ def train_gnnfingers(
 
         preds = univerifier(batch)
         loss = -(targets * torch.log(preds + 1e-8)).mean()
+        acc = (preds.argmax(dim=1) == targets.argmax(dim=1)).float().mean().item()
         loss.backward()
+        fingerprint_set.update_features(
+            config.feature_lr,
+            config.feature_clip_min,
+            config.feature_clip_max,
+        )
+        fingerprint_set.update_adjacency(config.top_k, step_size=config.adj_lr)
         optimizer.step()
 
-        fingerprint_set.update_adjacency(config.top_k)
-        fingerprint_set.clip_features(config.feature_clip_min, config.feature_clip_max)
-
         history["loss"].append(float(loss.item()))
+        history["accuracy"].append(float(acc))
         if step % 50 == 0:
-            print(f"[GNNFingers] step={step} loss={loss.item():.4f}")
+            print(f"[GNNFingers] step={step} loss={loss.item():.4f} acc={acc:.4f}")
 
     return {
         "univerifier": univerifier,

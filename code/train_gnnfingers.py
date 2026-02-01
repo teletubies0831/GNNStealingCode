@@ -28,18 +28,21 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--num-layers", type=int, default=2)
     parser.add_argument("--heads", type=int, default=4)
     parser.add_argument("--dropout", type=float, default=0.5)
-    parser.add_argument("--num-fingerprints", type=int, default=64)
+    parser.add_argument("--num-fingerprints", type=int, default=32)
     parser.add_argument("--num-nodes", type=int, default=32)
     parser.add_argument("--feat-dim", type=int, default=-1)
     parser.add_argument("--epsilon", type=float, default=0.1)
     parser.add_argument("--num-queries", type=int, default=16)
-    parser.add_argument("--iterations", type=int, default=1000)
+    parser.add_argument("--iterations", type=int, default=300)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--top-k", type=int, default=20)
-    parser.add_argument("--num-positive", type=int, default=100)
-    parser.add_argument("--num-negative", type=int, default=100)
+    parser.add_argument("--feature-lr", type=float, default=0.1)
+    parser.add_argument("--adj-lr", type=float, default=1.0)
+    parser.add_argument("--num-positive", type=int, default=40)
+    parser.add_argument("--num-negative", type=int, default=40)
+    parser.add_argument("--target-epochs", type=int, default=50)
     parser.add_argument("--output-dir", type=str, default="./gnnfingers_out")
-    parser.add_argument("--gpu", type=int, default=-1)
+    parser.add_argument("--gpu", type=int, default=0)
     args, _ = parser.parse_known_args()
     return args
 
@@ -115,7 +118,7 @@ def main() -> None:
         args.heads,
         args.dropout,
     ).to(device)
-    _train_target(target_model, data.to(device), train_idx, num_epochs=200)
+    _train_target(target_model, data.to(device), train_idx, num_epochs=args.target_epochs)
 
     feat_dim = data.num_features if args.feat_dim <= 0 else args.feat_dim
     fingerprint_set = GraphFingerprintSet(
@@ -142,7 +145,14 @@ def main() -> None:
     neg_train = neg_models[: len(neg_models) // 2]
     neg_test = neg_models[len(neg_models) // 2 :]
 
-    train_cfg = JointTrainConfig(iterations=args.iterations, lr=args.lr, top_k=args.top_k, task_type=args.task)
+    train_cfg = JointTrainConfig(
+        iterations=args.iterations,
+        lr=args.lr,
+        top_k=args.top_k,
+        feature_lr=args.feature_lr,
+        adj_lr=args.adj_lr,
+        task_type=args.task,
+    )
     result = train_gnnfingers(target_model, pos_train, neg_train, fingerprint_set, train_cfg, device)
     univerifier = result["univerifier"]
 
@@ -176,8 +186,11 @@ def main() -> None:
             "iterations": args.iterations,
             "lr": args.lr,
             "top_k": args.top_k,
+            "feature_lr": args.feature_lr,
+            "adj_lr": args.adj_lr,
             "num_positive": args.num_positive,
             "num_negative": args.num_negative,
+            "target_epochs": args.target_epochs,
             "univerifier_input_dim": univerifier.net[0].in_features,
             "metrics": metrics,
         },

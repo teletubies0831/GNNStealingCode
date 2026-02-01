@@ -16,7 +16,7 @@ from src.utils import load_npz_graph, split_graph
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser("Target model training (PyG)")
-    parser.add_argument("--gpu", type=int, default=-1, help="GPU device ID, -1 for CPU")
+    parser.add_argument("--gpu", type=int, default=0, help="GPU device ID, -1 for CPU")
     parser.add_argument("--target-model", type=str, default="gat")
     parser.add_argument(
         "--dataset",
@@ -31,6 +31,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--dropout", type=float, default=0.5)
     parser.add_argument("--wd", type=float, default=0)
     parser.add_argument("--head", type=int, default=4)
+    parser.add_argument("--log-every", type=int, default=50)
     args, _ = parser.parse_known_args()
     return args
 
@@ -55,19 +56,19 @@ def main() -> None:
 
     if args.target_model == "gat":
         model = GAT(data.num_features, args.num_hidden, n_classes, args.num_layers, args.head, args.dropout)
-        config = GATConfig(args.num_epochs, args.lr, args.wd, args.dropout)
+        config = GATConfig(args.num_epochs, args.lr, args.wd, args.dropout, log_every=args.log_every)
         train_gat(model, data, train_idx, config, device)
         torch.save(model.state_dict(), save_dir / save_name)
         evaluate_gat(model, data, test_idx, device, train_idx=train_idx, log_metrics=True)
     elif args.target_model == "gin":
         model = GIN(data.num_features, args.num_hidden, n_classes, args.num_layers, args.dropout)
-        config = GINConfig(args.num_epochs, args.lr, args.wd, args.dropout)
+        config = GINConfig(args.num_epochs, args.lr, args.wd, args.dropout, log_every=args.log_every)
         train_gin(model, data, train_idx, config, device)
         torch.save(model.state_dict(), save_dir / save_name)
         evaluate_gin(model, data, test_idx, device, train_idx=train_idx, log_metrics=True)
     elif args.target_model == "sage":
         model = SAGE(data.num_features, args.num_hidden, n_classes, args.num_layers, args.dropout)
-        config = SAGEConfig(args.num_epochs, args.lr, args.wd, args.dropout)
+        config = SAGEConfig(args.num_epochs, args.lr, args.wd, args.dropout, log_every=args.log_every)
         train_sage(model, data, train_idx, config, device)
         torch.save(model.state_dict(), save_dir / save_name)
         evaluate_sage(model, data, test_idx, device, train_idx=train_idx, log_metrics=True)

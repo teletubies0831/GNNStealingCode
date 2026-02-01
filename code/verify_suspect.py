@@ -30,7 +30,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--suspect-dropout", type=float, default=0.5)
     parser.add_argument("--num-classes", type=int, default=7)
     parser.add_argument("--api-endpoint", type=str, default="")
-    parser.add_argument("--gpu", type=int, default=-1)
+    parser.add_argument("--gpu", type=int, default=0)
     args, _ = parser.parse_known_args()
     return args
 

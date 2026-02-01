@@ -28,9 +28,10 @@ def main() -> None:
     num_classes = 6
     gnnfingers_out = "./gnnfingers_out"
     target_hidden = 256
-    surrogate_hidden = 256
+    surrogate_hidden_sizes = [32, 64]
     structure_mode = "learned"
     classifier_epochs = 50
+    steal_log_every = 50
 
     if target_model == surrogate_model:
         raise ValueError("target_model and surrogate_model must be different for stealing.")
@@ -47,27 +48,36 @@ def main() -> None:
         "--gpu",
         str(gpu_id),
     ]
-    steal_cmd = [
-        "python",
-        "attack.py",
-        "--dataset",
-        dataset,
-        "--target-model",
-        target_model,
-        "--target-model-dim",
-        str(target_hidden),
-        "--surrogate-model",
-        surrogate_model,
-        "--num-hidden",
-        str(surrogate_hidden),
-        "--save-surrogate",
-        "--structure",
-        structure_mode,
-        "--classifier-epochs",
-        str(classifier_epochs),
-        "--gpu",
-        str(gpu_id),
-    ]
+    steal_cmds = []
+    for hidden_size in surrogate_hidden_sizes:
+        run_tag = f"h{hidden_size}"
+        steal_cmds.append(
+            [
+                "python",
+                "attack.py",
+                "--dataset",
+                dataset,
+                "--target-model",
+                target_model,
+                "--target-model-dim",
+                str(target_hidden),
+                "--surrogate-model",
+                surrogate_model,
+                "--num-hidden",
+                str(hidden_size),
+                "--save-surrogate",
+                "--surrogate-tag",
+                run_tag,
+                "--structure",
+                structure_mode,
+                "--classifier-epochs",
+                str(classifier_epochs),
+                "--log-every",
+                str(steal_log_every),
+                "--gpu",
+                str(gpu_id),
+            ]
+        )
     train_gnnfingers_cmd = [
         "python",
         "train_gnnfingers.py",
@@ -102,9 +112,17 @@ def main() -> None:
     ]
 
     _run_step("1) train target model", train_target_cmd, repo_root)
-    _run_step("2) run GNN stealing (surrogate training)", steal_cmd, repo_root)
+    for index, cmd in enumerate(steal_cmds, start=1):
+        _run_step(f"2.{index}) run GNN stealing (surrogate hidden={surrogate_hidden_sizes[index - 1]})", cmd, repo_root)
     _run_step("3) train GNNFingers + classifier", train_gnnfingers_cmd, repo_root)
-    _run_step("4) verify suspect", verify_cmd, repo_root)
+    for hidden_size in surrogate_hidden_sizes:
+        suspect_ckpt = f"./surrogate_models/surrogate_{surrogate_model}_{dataset}_h{hidden_size}.pt"
+        verify_for_surrogate = verify_cmd + ["--suspect-ckpt", suspect_ckpt, "--suspect-hidden", str(hidden_size)]
+        _run_step(
+            f"4) verify suspect (surrogate hidden={hidden_size})",
+            verify_for_surrogate,
+            repo_root,
+        )
 
 
 if __name__ == "__main__":

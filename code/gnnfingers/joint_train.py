@@ -57,7 +57,7 @@ def train_gnnfingers(
     pos_wrappers = [LocalPyGSuspectWrapper(model, device, task_type=config.task_type) for model in pos_models]
     neg_wrappers = [LocalPyGSuspectWrapper(model, device, task_type=config.task_type) for model in neg_models]
 
-    history = {"loss": [], "edge_updates": []}
+    history = {"loss": [], "accuracy": [], "edge_updates": []}
 
     for step in range(config.iterations):
         graphs = fingerprint_set.build_graphs()
@@ -86,6 +86,7 @@ def train_gnnfingers(
 
         preds = univerifier(batch)
         loss = -(targets * torch.log(preds + 1e-8)).mean()
+        acc = (preds.argmax(dim=1) == targets.argmax(dim=1)).float().mean().item()
         loss.backward()
         fingerprint_set.update_features(
             config.feature_lr,
@@ -96,8 +97,9 @@ def train_gnnfingers(
         optimizer.step()
 
         history["loss"].append(float(loss.item()))
+        history["accuracy"].append(float(acc))
         if step % 50 == 0:
-            print(f"[GNNFingers] step={step} loss={loss.item():.4f}")
+            print(f"[GNNFingers] step={step} loss={loss.item():.4f} acc={acc:.4f}")
 
     return {
         "univerifier": univerifier,

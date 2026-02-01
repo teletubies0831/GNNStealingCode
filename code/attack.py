@@ -41,8 +41,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--query_ratio", type=float, default=1.0)
     parser.add_argument("--structure", type=str, default="original")
     parser.add_argument("--classifier-epochs", type=int, default=50)
+    parser.add_argument("--log-every", type=int, default=50)
     parser.add_argument("--save-surrogate", action="store_true", help="Save surrogate checkpoint after training")
     parser.add_argument("--surrogate-save-dir", type=str, default="./surrogate_models")
+    parser.add_argument("--surrogate-tag", type=str, default="")
     parser.add_argument("--transform", type=str, default="TSNE")
     args, _ = parser.parse_known_args()
     return args
@@ -108,7 +110,7 @@ def _train_surrogate(args, data, train_idx, query_logits, query_embeddings, devi
     else:
         target_proj = None
 
-    for _ in range(config.num_epochs):
+    for epoch in range(1, config.num_epochs + 1):
         model.train()
         optimizer.zero_grad()
         logits, embeddings = model(data.x, data.edge_index)
@@ -133,6 +135,8 @@ def _train_surrogate(args, data, train_idx, query_logits, query_embeddings, devi
 
         loss.backward()
         optimizer.step()
+        if args.log_every and epoch % args.log_every == 0:
+            print(f"[Stealing] epoch={epoch} loss={loss.item():.4f}")
 
     return model
 
@@ -156,13 +160,15 @@ def _train_classifier_head(model, data, train_idx, args, device) -> None:
     trainable_params = [p for p in model.parameters() if p.requires_grad]
     optimizer = torch.optim.Adam(trainable_params, lr=args.lr, weight_decay=args.wd)
 
-    for _ in range(args.classifier_epochs):
+    for epoch in range(1, args.classifier_epochs + 1):
         model.train()
         optimizer.zero_grad()
         logits, _ = model(data.x, data.edge_index)
         loss = F.cross_entropy(logits[train_idx], data.y[train_idx])
         loss.backward()
         optimizer.step()
+        if args.log_every and epoch % args.log_every == 0:
+            print(f"[Stealing] classifier epoch={epoch} loss={loss.item():.4f}")
 
 
 def main() -> None:
@@ -199,8 +205,10 @@ def main() -> None:
     if args.save_surrogate:
         output_dir = Path(args.surrogate_save_dir)
         output_dir.mkdir(parents=True, exist_ok=True)
-        surrogate_path = output_dir / f"surrogate_{args.surrogate_model}_{args.dataset}.pt"
+        tag = f"_{args.surrogate_tag}" if args.surrogate_tag else ""
+        surrogate_path = output_dir / f"surrogate_{args.surrogate_model}_{args.dataset}{tag}.pt"
         torch.save(surrogate_model.state_dict(), surrogate_path)
+        print(f"[Stealing] saved surrogate checkpoint to {surrogate_path}")
 
     if args.surrogate_model == "gat":
         _, surrogate_logits, surrogate_embeddings = evaluate_gat(surrogate_model, data, test_idx, device)
@@ -227,10 +235,12 @@ def main() -> None:
         torch.from_numpy(detached_preds).to(device),
         target_test_logits[test_idx].to(device),
     )
+    print(f"[Stealing] detached_acc={detached_acc:.4f} fidelity={fidelity:.4f}")
 
     output_folder = Path("./results_acc_fidelity") / f"results_{args.target_model}_{args.target_model_dim}_{args.surrogate_model}_{args.num_hidden}"
     output_folder.mkdir(parents=True, exist_ok=True)
-    filename = output_folder / f"{args.dataset}_original.txt"
+    tag = f"_{args.surrogate_tag}" if args.surrogate_tag else ""
+    filename = output_folder / f"{args.dataset}_{args.structure}{tag}.txt"
     with filename.open("a") as handle:
         handle.write(
             f"{args.target_model},{args.target_model_dim},{args.surrogate_model},{args.num_hidden},"

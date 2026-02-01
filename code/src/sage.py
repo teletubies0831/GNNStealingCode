@@ -17,6 +17,7 @@ class TrainConfig:
     lr: float
     weight_decay: float
     dropout: float
+    log_every: int = 0
 
 
 class SAGE(nn.Module):
@@ -47,13 +48,15 @@ def train_sage(model: SAGE, data, train_idx: torch.Tensor, config: TrainConfig, 
     data = data.to(device)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
 
-    for _ in range(config.num_epochs):
+    for epoch in range(1, config.num_epochs + 1):
         model.train()
         optimizer.zero_grad()
         logits, _ = model(data.x, data.edge_index)
         loss = F.cross_entropy(logits[train_idx], data.y[train_idx])
         loss.backward()
         optimizer.step()
+        if config.log_every and epoch % config.log_every == 0:
+            print(f"[Target] epoch={epoch} loss={loss.item():.4f}")
 
 
 def evaluate_sage(

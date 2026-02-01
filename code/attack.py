@@ -19,6 +19,7 @@ from src.utils import (
     split_graph_different_ratio,
     train_detached_classifier,
 )
+from core.idgl import learn_graph_structure
 
 
 def _parse_args() -> argparse.Namespace:
@@ -39,6 +40,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--round_index", type=int, default=1)
     parser.add_argument("--query_ratio", type=float, default=1.0)
     parser.add_argument("--structure", type=str, default="original")
+    parser.add_argument("--classifier-epochs", type=int, default=50)
     parser.add_argument("--save-surrogate", action="store_true", help="Save surrogate checkpoint after training")
     parser.add_argument("--surrogate-save-dir", type=str, default="./surrogate_models")
     parser.add_argument("--transform", type=str, default="TSNE")
@@ -93,29 +95,29 @@ def _train_surrogate(args, data, train_idx, query_logits, query_embeddings, devi
     config = GATConfig(args.num_epochs, args.lr, args.wd, args.dropout)
     optimizer = torch.optim.Adam(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
 
+    if args.recovery_from == "projection":
+        target_proj = projection(
+            query_embeddings.detach().cpu().numpy(),
+            data.y[train_idx].cpu().numpy(),
+            transform_name=args.transform,
+            show_figure=False,
+            gnn=args.target_model,
+            dataset=args.dataset,
+        )
+        target_proj = torch.from_numpy(target_proj).float().to(device)
+    else:
+        target_proj = None
+
     for _ in range(config.num_epochs):
         model.train()
         optimizer.zero_grad()
         logits, embeddings = model(data.x, data.edge_index)
 
         if args.recovery_from == "prediction":
-            loss = F.kl_div(
-                F.log_softmax(logits[train_idx], dim=1),
-                F.softmax(query_logits, dim=1),
-                reduction="batchmean",
-            )
+            loss = F.mse_loss(logits[train_idx], query_logits)
         elif args.recovery_from == "embedding":
             loss = F.mse_loss(embeddings[train_idx], query_embeddings)
         elif args.recovery_from == "projection":
-            target_proj = projection(
-                query_embeddings.detach().cpu().numpy(),
-                data.y[train_idx].cpu().numpy(),
-                transform_name=args.transform,
-                show_figure=False,
-                gnn=args.target_model,
-                dataset=args.dataset,
-            )
-            target_proj = torch.from_numpy(target_proj).float().to(device)
             surrogate_proj = projection(
                 embeddings[train_idx].detach().cpu().numpy(),
                 data.y[train_idx].cpu().numpy(),
@@ -135,6 +137,34 @@ def _train_surrogate(args, data, train_idx, query_logits, query_embeddings, devi
     return model
 
 
+def _freeze_encoder(model) -> None:
+    if hasattr(model, "layers"):
+        for layer in model.layers:
+            for param in layer.parameters():
+                param.requires_grad = False
+    if hasattr(model, "classifier"):
+        for param in model.classifier.parameters():
+            param.requires_grad = True
+    else:
+        if hasattr(model, "layers") and len(model.layers) > 0:
+            for param in model.layers[-1].parameters():
+                param.requires_grad = True
+
+
+def _train_classifier_head(model, data, train_idx, args, device) -> None:
+    _freeze_encoder(model)
+    trainable_params = [p for p in model.parameters() if p.requires_grad]
+    optimizer = torch.optim.Adam(trainable_params, lr=args.lr, weight_decay=args.wd)
+
+    for _ in range(args.classifier_epochs):
+        model.train()
+        optimizer.zero_grad()
+        logits, _ = model(data.x, data.edge_index)
+        loss = F.cross_entropy(logits[train_idx], data.y[train_idx])
+        loss.backward()
+        optimizer.step()
+
+
 def main() -> None:
     args = _parse_args()
 
@@ -144,10 +174,13 @@ def main() -> None:
     train_idx, val_idx, test_idx = split_graph_different_ratio(
         data, frac_list=[0.3, 0.2, 0.5], ratio=args.query_ratio
     )
-    if args.structure != "original":
-        raise ValueError("Only 'original' structure is supported in the PyG refactor.")
+    if args.structure not in ("original", "learned"):
+        raise ValueError("structure must be 'original' or 'learned' (IDGL).")
 
     data = data.to(device)
+    if args.structure == "learned":
+        learned_edges, _ = learn_graph_structure(data.x, data.y)
+        data.edge_index = learned_edges
 
     target_model = _load_target_model(args, data, n_classes, device)
 
@@ -162,6 +195,7 @@ def main() -> None:
     target_embeddings = target_embeddings[train_idx].detach()
 
     surrogate_model = _train_surrogate(args, data, train_idx, target_logits, target_embeddings, device)
+    _train_classifier_head(surrogate_model, data, train_idx, args, device)
     if args.save_surrogate:
         output_dir = Path(args.surrogate_save_dir)
         output_dir.mkdir(parents=True, exist_ok=True)

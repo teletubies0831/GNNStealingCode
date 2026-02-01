@@ -29,6 +29,8 @@ def main() -> None:
     gnnfingers_out = "./gnnfingers_out"
     target_hidden = 256
     surrogate_hidden = 256
+    structure_mode = "learned"
+    classifier_epochs = 50
 
     if target_model == surrogate_model:
         raise ValueError("target_model and surrogate_model must be different for stealing.")
@@ -59,6 +61,10 @@ def main() -> None:
         "--num-hidden",
         str(surrogate_hidden),
         "--save-surrogate",
+        "--structure",
+        structure_mode,
+        "--classifier-epochs",
+        str(classifier_epochs),
         "--gpu",
         str(gpu_id),
     ]

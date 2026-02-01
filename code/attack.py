@@ -23,7 +23,7 @@ from src.utils import (
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser("Model stealing for inductive GNNs (PyG)")
-    parser.add_argument("--gpu", type=int, default=-1, help="GPU device ID, -1 for CPU")
+    parser.add_argument("--gpu", type=int, default=0, help="GPU device ID, -1 for CPU")
     parser.add_argument("--dataset", type=str, default="citeseer_full")
     parser.add_argument("--num-epochs", type=int, default=200)
     parser.add_argument("--num-layers", type=int, default=2)

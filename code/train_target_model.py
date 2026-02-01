@@ -16,7 +16,7 @@ from src.utils import load_npz_graph, split_graph
 
 def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser("Target model training (PyG)")
-    parser.add_argument("--gpu", type=int, default=-1, help="GPU device ID, -1 for CPU")
+    parser.add_argument("--gpu", type=int, default=0, help="GPU device ID, -1 for CPU")
     parser.add_argument("--target-model", type=str, default="gat")
     parser.add_argument(
         "--dataset",

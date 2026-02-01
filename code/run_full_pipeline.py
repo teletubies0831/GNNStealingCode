@@ -8,10 +8,12 @@ from pathlib import Path
 sys.path.append(str(Path(__file__).resolve().parent))
 
 import subprocess
+import torch
 
 
 def main() -> None:
     repo_root = Path(__file__).resolve().parent
+    gpu_id = 0 if torch.cuda.is_available() else -1
     train_cmd = [
         "python",
         "train_gnnfingers.py",
@@ -24,7 +26,7 @@ def main() -> None:
         "--output-dir",
         "./gnnfingers_out",
         "--gpu",
-        "-1",
+        str(gpu_id),
     ]
     verify_cmd = [
         "python",
@@ -40,7 +42,7 @@ def main() -> None:
         "--num-classes",
         "6",
         "--gpu",
-        "-1",
+        str(gpu_id),
     ]
 
     print("[pipeline]", " ".join(train_cmd))

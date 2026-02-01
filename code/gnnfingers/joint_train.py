@@ -21,6 +21,8 @@ class JointTrainConfig:
     iterations: int = 1000
     lr: float = 0.001
     top_k: int = 20
+    feature_lr: float = 0.1
+    adj_lr: float = 1.0
     feature_clip_min: float = -1.0
     feature_clip_max: float = 1.0
     task_type: str = "node_classification"
@@ -85,10 +87,13 @@ def train_gnnfingers(
         preds = univerifier(batch)
         loss = -(targets * torch.log(preds + 1e-8)).mean()
         loss.backward()
+        fingerprint_set.update_features(
+            config.feature_lr,
+            config.feature_clip_min,
+            config.feature_clip_max,
+        )
+        fingerprint_set.update_adjacency(config.top_k, step_size=config.adj_lr)
         optimizer.step()
-
-        fingerprint_set.update_adjacency(config.top_k)
-        fingerprint_set.clip_features(config.feature_clip_min, config.feature_clip_max)
 
         history["loss"].append(float(loss.item()))
         if step % 50 == 0:

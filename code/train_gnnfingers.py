@@ -36,6 +36,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--iterations", type=int, default=300)
     parser.add_argument("--lr", type=float, default=0.001)
     parser.add_argument("--top-k", type=int, default=20)
+    parser.add_argument("--feature-lr", type=float, default=0.1)
+    parser.add_argument("--adj-lr", type=float, default=1.0)
     parser.add_argument("--num-positive", type=int, default=40)
     parser.add_argument("--num-negative", type=int, default=40)
     parser.add_argument("--target-epochs", type=int, default=50)
@@ -143,7 +145,14 @@ def main() -> None:
     neg_train = neg_models[: len(neg_models) // 2]
     neg_test = neg_models[len(neg_models) // 2 :]
 
-    train_cfg = JointTrainConfig(iterations=args.iterations, lr=args.lr, top_k=args.top_k, task_type=args.task)
+    train_cfg = JointTrainConfig(
+        iterations=args.iterations,
+        lr=args.lr,
+        top_k=args.top_k,
+        feature_lr=args.feature_lr,
+        adj_lr=args.adj_lr,
+        task_type=args.task,
+    )
     result = train_gnnfingers(target_model, pos_train, neg_train, fingerprint_set, train_cfg, device)
     univerifier = result["univerifier"]
 
@@ -177,6 +186,8 @@ def main() -> None:
             "iterations": args.iterations,
             "lr": args.lr,
             "top_k": args.top_k,
+            "feature_lr": args.feature_lr,
+            "adj_lr": args.adj_lr,
             "num_positive": args.num_positive,
             "num_negative": args.num_negative,
             "target_epochs": args.target_epochs,

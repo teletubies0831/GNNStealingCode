@@ -80,7 +80,14 @@ class GraphFingerprintSet(nn.Module):
         with torch.no_grad():
             self.features.data.clamp_(min_val, max_val)
 
-    def update_adjacency(self, top_k: int) -> None:
+    def update_features(self, lr: float, min_val: float, max_val: float) -> None:
+        if self.features.grad is None:
+            return
+        with torch.no_grad():
+            self.features.data.add_(lr * self.features.grad.detach())
+            self.features.data.clamp_(min_val, max_val)
+
+    def update_adjacency(self, top_k: int, step_size: float = 1.0) -> None:
         if self.adj_logits.grad is None:
             return
         grad = self.adj_logits.grad.detach()
@@ -94,11 +101,8 @@ class GraphFingerprintSet(nn.Module):
                 row = flat_idx // self.num_nodes
                 col = flat_idx % self.num_nodes
                 sign = grad[idx, row, col]
-                adj_bin = (torch.sigmoid(self.adj_logits[idx, row, col]) > 0.5).float()
-                if adj_bin == 1.0 and sign <= 0:
-                    self.adj_logits.data[idx, row, col] -= 5.0
-                elif adj_bin == 0.0 and sign >= 0:
-                    self.adj_logits.data[idx, row, col] += 5.0
+                direction = torch.sign(sign)
+                self.adj_logits.data[idx, row, col] += step_size * direction
 
     def get_query_meta(self) -> List[Dict[str, torch.Tensor]]:
         return [

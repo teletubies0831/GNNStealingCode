@@ -95,7 +95,20 @@ def _train_surrogate(args, data, train_idx, query_logits, query_embeddings, devi
     ).to(device)
 
     config = GATConfig(args.num_epochs, args.lr, args.wd, args.dropout)
-    optimizer = torch.optim.Adam(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
+    with torch.no_grad():
+        _, sample_embeddings = model(data.x, data.edge_index)
+    embed_dim = sample_embeddings.size(1)
+    if args.recovery_from == "embedding" and embed_dim != query_embeddings.size(1):
+        adapter = torch.nn.Linear(embed_dim, query_embeddings.size(1)).to(device)
+        print(f"[Stealing] using embedding adapter {embed_dim}->{query_embeddings.size(1)}")
+        optimizer = torch.optim.Adam(
+            list(model.parameters()) + list(adapter.parameters()),
+            lr=config.lr,
+            weight_decay=config.weight_decay,
+        )
+    else:
+        adapter = None
+        optimizer = torch.optim.Adam(model.parameters(), lr=config.lr, weight_decay=config.weight_decay)
 
     if args.recovery_from == "projection":
         target_proj = projection(
@@ -118,7 +131,8 @@ def _train_surrogate(args, data, train_idx, query_logits, query_embeddings, devi
         if args.recovery_from == "prediction":
             loss = F.mse_loss(logits[train_idx], query_logits)
         elif args.recovery_from == "embedding":
-            loss = F.mse_loss(embeddings[train_idx], query_embeddings)
+            aligned_embeddings = adapter(embeddings) if adapter is not None else embeddings
+            loss = F.mse_loss(aligned_embeddings[train_idx], query_embeddings)
         elif args.recovery_from == "projection":
             surrogate_proj = projection(
                 embeddings[train_idx].detach().cpu().numpy(),

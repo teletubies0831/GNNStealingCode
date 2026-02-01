@@ -28,6 +28,8 @@ def main() -> None:
     num_classes = 6
     gnnfingers_out = "./gnnfingers_out"
     target_hidden = 256
+    gnn_layers = 3
+    gnn_heads = 4
     surrogate_hidden_sizes = [32, 64]
     structure_mode = "learned"
     classifier_epochs = 50
@@ -45,6 +47,10 @@ def main() -> None:
         target_model,
         "--num-hidden",
         str(target_hidden),
+        "--num-layers",
+        str(gnn_layers),
+        "--head",
+        str(gnn_heads),
         "--gpu",
         str(gpu_id),
     ]
@@ -65,6 +71,10 @@ def main() -> None:
                 surrogate_model,
                 "--num-hidden",
                 str(hidden_size),
+                "--num-layers",
+                str(gnn_layers),
+                "--head",
+                str(gnn_heads),
                 "--save-surrogate",
                 "--surrogate-tag",
                 run_tag,
@@ -105,6 +115,10 @@ def main() -> None:
         "0.5",
         "--suspect-model",
         suspect_model,
+        "--suspect-layers",
+        str(gnn_layers),
+        "--suspect-heads",
+        str(gnn_heads),
         "--num-classes",
         str(num_classes),
         "--gpu",

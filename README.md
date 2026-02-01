@@ -99,7 +99,20 @@ python run_full_pipeline.py
 ```
 
 This script lives next to `attack.py` and `train_target_model.py` and runs the default
-GNNFingers training + verification steps with built-in parameters.
+GNNFingers training + verification steps with built-in parameters. The pipeline now
+includes optional **suspect postprocessing** (fine-tuning and pruning) to simulate
+common model-theft variants before verification.
+
+### Suspect postprocessing (fine-tune / prune)
+
+Use the helper to create fine-tuned or pruned suspect checkpoints for verification:
+
+```
+python postprocess_suspect.py --dataset citeseer_full --suspect-model gin \
+  --suspect-ckpt ./surrogate_models/surrogate_gin_citeseer_full_h32.pt \
+  --suspect-hidden 32 --suspect-layers 3 --suspect-heads 4 \
+  --finetune-epochs 20 --prune-ratio 0.3 --gpu -1
+```
 
 ### Design details
 

@@ -31,6 +31,7 @@ def main() -> None:
     gnn_layers = 3
     gnn_heads = 4
     surrogate_hidden_sizes = [32, 64]
+    num_steal_runs = 32
     finetune_epochs = 20
     prune_ratios = [0.3]
     structure_mode = "learned"
@@ -56,40 +57,46 @@ def main() -> None:
         "--gpu",
         str(gpu_id),
     ]
-    steal_cmds = []
+    steal_cmds: list[tuple[str, list[str]]] = []
     for hidden_size in surrogate_hidden_sizes:
-        run_tag = f"h{hidden_size}"
-        steal_cmds.append(
-            [
-                "python",
-                "attack.py",
-                "--dataset",
-                dataset,
-                "--target-model",
-                target_model,
-                "--target-model-dim",
-                str(target_hidden),
-                "--surrogate-model",
-                surrogate_model,
-                "--num-hidden",
-                str(hidden_size),
-                "--num-layers",
-                str(gnn_layers),
-                "--head",
-                str(gnn_heads),
-                "--save-surrogate",
-                "--surrogate-tag",
-                run_tag,
-                "--structure",
-                structure_mode,
-                "--classifier-epochs",
-                str(classifier_epochs),
-                "--log-every",
-                str(steal_log_every),
-                "--gpu",
-                str(gpu_id),
-            ]
-        )
+        for run_index in range(1, num_steal_runs + 1):
+            run_tag = f"h{hidden_size}_r{run_index:02d}"
+            steal_cmds.append(
+                (
+                    f"2) run GNN stealing (hidden={hidden_size}, run={run_index})",
+                    [
+                        "python",
+                        "attack.py",
+                        "--dataset",
+                        dataset,
+                        "--target-model",
+                        target_model,
+                        "--target-model-dim",
+                        str(target_hidden),
+                        "--surrogate-model",
+                        surrogate_model,
+                        "--num-hidden",
+                        str(hidden_size),
+                        "--num-layers",
+                        str(gnn_layers),
+                        "--head",
+                        str(gnn_heads),
+                        "--save-surrogate",
+                        "--surrogate-tag",
+                        run_tag,
+                        "--round_index",
+                        str(run_index),
+                        "--structure",
+                        structure_mode,
+                        "--classifier-epochs",
+                        str(classifier_epochs),
+                        "--log-every",
+                        str(steal_log_every),
+                        "--gpu",
+                        str(gpu_id),
+                    ],
+                )
+            )
     train_gnnfingers_cmd = [
         "python",
         "train_gnnfingers.py",
@@ -148,70 +155,72 @@ def main() -> None:
     ]
 
     _run_step("1) train target model", train_target_cmd, repo_root)
-    for index, cmd in enumerate(steal_cmds, start=1):
-        _run_step(f"2.{index}) run GNN stealing (surrogate hidden={surrogate_hidden_sizes[index - 1]})", cmd, repo_root)
+    for label, cmd in steal_cmds:
+        _run_step(label, cmd, repo_root)
     _run_step("3) train GNNFingers + classifier", train_gnnfingers_cmd, repo_root)
     for hidden_size in surrogate_hidden_sizes:
-        suspect_ckpt = f"./surrogate_models/surrogate_{surrogate_model}_{dataset}_h{hidden_size}.pt"
-        verify_for_surrogate = verify_base_cmd + ["--suspect-ckpt", suspect_ckpt, "--suspect-hidden", str(hidden_size)]
-        _run_step(
-            f"4) verify suspect (surrogate hidden={hidden_size})",
-            verify_for_surrogate,
-            repo_root,
-        )
-        for ratio in prune_ratios:
-            output_tag = f"h{hidden_size}_prune{int(ratio * 100)}"
-            postprocess_for_prune = postprocess_cmd + [
-                "--suspect-ckpt",
-                suspect_ckpt,
-                "--suspect-hidden",
-                str(hidden_size),
-                "--prune-ratio",
-                str(ratio),
-                "--output-tag",
-                output_tag,
-            ]
+        for run_index in range(1, num_steal_runs + 1):
+            run_tag = f"h{hidden_size}_r{run_index:02d}"
+            suspect_ckpt = f"./surrogate_models/surrogate_{surrogate_model}_{dataset}_{run_tag}.pt"
+            verify_for_surrogate = verify_base_cmd + ["--suspect-ckpt", suspect_ckpt, "--suspect-hidden", str(hidden_size)]
             _run_step(
-                f"5) prune suspect (hidden={hidden_size}, ratio={ratio})",
-                postprocess_for_prune,
+                f"4) verify suspect (hidden={hidden_size}, run={run_index})",
+                verify_for_surrogate,
                 repo_root,
             )
-            pruned_ckpt = f"./suspect_models/suspect_{suspect_model}_{dataset}_{output_tag}.pt"
-            verify_pruned = verify_base_cmd + [
-                "--suspect-ckpt",
-                pruned_ckpt,
-                "--suspect-hidden",
-                str(hidden_size),
-            ]
-            _run_step(
-                f"6) verify pruned suspect (hidden={hidden_size}, ratio={ratio})",
-                verify_pruned,
-                repo_root,
-            )
-        if finetune_epochs > 0:
-            output_tag = f"h{hidden_size}_ft{finetune_epochs}"
-            postprocess_for_ft = postprocess_cmd + [
-                "--suspect-ckpt",
-                suspect_ckpt,
-                "--suspect-hidden",
-                str(hidden_size),
-                "--prune-ratio",
-                "0.0",
-                "--output-tag",
-                output_tag,
-            ]
-            _run_step(
-                f"7) fine-tune suspect (hidden={hidden_size}, epochs={finetune_epochs})",
-                postprocess_for_ft,
-                repo_root,
-            )
-            ft_ckpt = f"./suspect_models/suspect_{suspect_model}_{dataset}_{output_tag}.pt"
-            verify_ft = verify_base_cmd + ["--suspect-ckpt", ft_ckpt, "--suspect-hidden", str(hidden_size)]
-            _run_step(
-                f"8) verify fine-tuned suspect (hidden={hidden_size}, epochs={finetune_epochs})",
-                verify_ft,
-                repo_root,
-            )
+            for ratio in prune_ratios:
+                output_tag = f"{run_tag}_prune{int(ratio * 100)}"
+                postprocess_for_prune = postprocess_cmd + [
+                    "--suspect-ckpt",
+                    suspect_ckpt,
+                    "--suspect-hidden",
+                    str(hidden_size),
+                    "--prune-ratio",
+                    str(ratio),
+                    "--output-tag",
+                    output_tag,
+                ]
+                _run_step(
+                    f"5) prune suspect (hidden={hidden_size}, run={run_index}, ratio={ratio})",
+                    postprocess_for_prune,
+                    repo_root,
+                )
+                pruned_ckpt = f"./suspect_models/suspect_{suspect_model}_{dataset}_{output_tag}.pt"
+                verify_pruned = verify_base_cmd + [
+                    "--suspect-ckpt",
+                    pruned_ckpt,
+                    "--suspect-hidden",
+                    str(hidden_size),
+                ]
+                _run_step(
+                    f"6) verify pruned suspect (hidden={hidden_size}, run={run_index}, ratio={ratio})",
+                    verify_pruned,
+                    repo_root,
+                )
+            if finetune_epochs > 0:
+                output_tag = f"{run_tag}_ft{finetune_epochs}"
+                postprocess_for_ft = postprocess_cmd + [
+                    "--suspect-ckpt",
+                    suspect_ckpt,
+                    "--suspect-hidden",
+                    str(hidden_size),
+                    "--prune-ratio",
+                    "0.0",
+                    "--output-tag",
+                    output_tag,
+                ]
+                _run_step(
+                    f"7) fine-tune suspect (hidden={hidden_size}, run={run_index}, epochs={finetune_epochs})",
+                    postprocess_for_ft,
+                    repo_root,
+                )
+                ft_ckpt = f"./suspect_models/suspect_{suspect_model}_{dataset}_{output_tag}.pt"
+                verify_ft = verify_base_cmd + ["--suspect-ckpt", ft_ckpt, "--suspect-hidden", str(hidden_size)]
+                _run_step(
+                    f"8) verify fine-tuned suspect (hidden={hidden_size}, run={run_index}, epochs={finetune_epochs})",
+                    verify_ft,
+                    repo_root,
+                )
 
 
 if __name__ == "__main__":

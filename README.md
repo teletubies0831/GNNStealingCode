@@ -103,7 +103,8 @@ GNNFingers training + verification steps with built-in parameters. The pipeline 
 includes optional **suspect postprocessing** (fine-tuning and pruning) to simulate
 common model-theft variants before verification, and can run **batched stealing**
 experiments (`num_steal_runs`, default 32) to produce a pool of stolen models for
-evaluation.
+evaluation. After verification, the pipeline prints summary counts for raw, pruned,
+and fine-tuned suspects.
 
 ### Suspect postprocessing (fine-tune / prune)
 

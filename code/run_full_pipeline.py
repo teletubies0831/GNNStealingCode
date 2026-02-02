@@ -11,10 +11,48 @@ import subprocess
 import torch
 
 
-def _run_step(label: str, command: list[str], repo_root: Path) -> None:
+def _run_step(label: str, command: list[str], repo_root: Path, capture: bool = False) -> str:
     print(f"[pipeline] {label}")
     print("[pipeline]", " ".join(command))
+    if capture:
+        result = subprocess.run(command, cwd=str(repo_root), check=True, capture_output=True, text=True)
+        if result.stdout:
+            print(result.stdout, end="")
+        if result.stderr:
+            print(result.stderr, end="", file=sys.stderr)
+        return result.stdout + result.stderr
     subprocess.run(command, cwd=str(repo_root), check=True)
+    return ""
+
+
+def _parse_verification(output: str) -> tuple[float | None, str | None]:
+    o_plus = None
+    verdict = None
+    for line in output.splitlines():
+        if line.startswith("o_plus="):
+            try:
+                o_plus = float(line.split("=", 1)[1])
+            except ValueError:
+                o_plus = None
+        if line.startswith("verdict="):
+            verdict = line.split("=", 1)[1].strip()
+    return o_plus, verdict
+
+
+def _summarize_verdicts(title: str, verdicts: list[str]) -> None:
+    if not verdicts:
+        print(f"[pipeline] summary {title}: no results")
+        return
+    counts = {"pirated": 0, "irrelevant": 0, "unknown": 0}
+    for verdict in verdicts:
+        if verdict in counts:
+            counts[verdict] += 1
+        else:
+            counts["unknown"] += 1
+    total = sum(counts.values())
+    print(
+        f"[pipeline] summary {title}: total={total} pirated={counts['pirated']} irrelevant={counts['irrelevant']} unknown={counts['unknown']}"
+    )
 
 
 def main() -> None:
@@ -154,6 +192,10 @@ def main() -> None:
         str(gpu_id),
     ]
 
+    raw_verdicts: list[str] = []
+    pruned_verdicts: list[str] = []
+    finetuned_verdicts: list[str] = []
+
     _run_step("1) train target model", train_target_cmd, repo_root)
     for label, cmd in steal_cmds:
         _run_step(label, cmd, repo_root)
@@ -163,11 +205,15 @@ def main() -> None:
             run_tag = f"h{hidden_size}_r{run_index:02d}"
             suspect_ckpt = f"./surrogate_models/surrogate_{surrogate_model}_{dataset}_{run_tag}.pt"
             verify_for_surrogate = verify_base_cmd + ["--suspect-ckpt", suspect_ckpt, "--suspect-hidden", str(hidden_size)]
-            _run_step(
+            output = _run_step(
                 f"4) verify suspect (hidden={hidden_size}, run={run_index})",
                 verify_for_surrogate,
                 repo_root,
+                capture=True,
             )
+            _, verdict = _parse_verification(output)
+            if verdict:
+                raw_verdicts.append(verdict)
             for ratio in prune_ratios:
                 output_tag = f"{run_tag}_prune{int(ratio * 100)}"
                 postprocess_for_prune = postprocess_cmd + [
@@ -192,11 +238,15 @@ def main() -> None:
                     "--suspect-hidden",
                     str(hidden_size),
                 ]
-                _run_step(
+                output = _run_step(
                     f"6) verify pruned suspect (hidden={hidden_size}, run={run_index}, ratio={ratio})",
                     verify_pruned,
                     repo_root,
+                    capture=True,
                 )
+                _, verdict = _parse_verification(output)
+                if verdict:
+                    pruned_verdicts.append(verdict)
             if finetune_epochs > 0:
                 output_tag = f"{run_tag}_ft{finetune_epochs}"
                 postprocess_for_ft = postprocess_cmd + [
@@ -216,11 +266,19 @@ def main() -> None:
                 )
                 ft_ckpt = f"./suspect_models/suspect_{suspect_model}_{dataset}_{output_tag}.pt"
                 verify_ft = verify_base_cmd + ["--suspect-ckpt", ft_ckpt, "--suspect-hidden", str(hidden_size)]
-                _run_step(
+                output = _run_step(
                     f"8) verify fine-tuned suspect (hidden={hidden_size}, run={run_index}, epochs={finetune_epochs})",
                     verify_ft,
                     repo_root,
+                    capture=True,
                 )
+                _, verdict = _parse_verification(output)
+                if verdict:
+                    finetuned_verdicts.append(verdict)
+
+    _summarize_verdicts("raw", raw_verdicts)
+    _summarize_verdicts("pruned", pruned_verdicts)
+    _summarize_verdicts("finetuned", finetuned_verdicts)
 
 
 if __name__ == "__main__":

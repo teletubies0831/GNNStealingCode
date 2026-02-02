@@ -104,7 +104,12 @@ includes optional **suspect postprocessing** (fine-tuning and pruning) to simula
 common model-theft variants before verification, and can run **batched stealing**
 experiments (`num_steal_runs`, default 32) to produce a pool of stolen models for
 evaluation. After verification, the pipeline prints summary counts for raw, pruned,
-and fine-tuned suspects.
+and fine-tuned suspects, along with average o_plus and accuracy vs the expected
+label (configure `expected_*_verdict` in the pipeline).
+
+The GNNFingers trainer can also mix **negative datasets** (different data sources)
+and **negative architectures** when building the univerifier. This helps when you
+want the verifier to learn against unrelated models beyond same-dataset variants.
 
 ### Suspect postprocessing (fine-tune / prune)
 
@@ -115,6 +120,17 @@ python postprocess_suspect.py --dataset citeseer_full --suspect-model gin \
   --suspect-ckpt ./surrogate_models/surrogate_gin_citeseer_full_h32_r01.pt \
   --suspect-hidden 32 --suspect-layers 3 --suspect-heads 4 \
   --finetune-epochs 20 --prune-ratio 0.3 --gpu -1
+```
+
+### Training with extra negative datasets
+
+To include unrelated models from other datasets or architectures when training the
+univerifier, pass `--negative-datasets` and `--negative-architectures`:
+
+```
+python train_gnnfingers.py --task node_classification --dataset citeseer_full --target-model gat \
+  --negative-datasets dblp,pubmed --negative-architectures gat,gin,sage \
+  --negative-per-dataset 10 --negative-epochs 20 --output-dir ./gnnfingers_out --gpu -1
 ```
 
 ### Design details

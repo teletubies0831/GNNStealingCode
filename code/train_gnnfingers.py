@@ -40,6 +40,10 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--adj-lr", type=float, default=1.0)
     parser.add_argument("--num-positive", type=int, default=40)
     parser.add_argument("--num-negative", type=int, default=40)
+    parser.add_argument("--negative-datasets", type=str, default="")
+    parser.add_argument("--negative-architectures", type=str, default="gat,gin,sage")
+    parser.add_argument("--negative-per-dataset", type=int, default=10)
+    parser.add_argument("--negative-epochs", type=int, default=20)
     parser.add_argument("--target-epochs", type=int, default=50)
     parser.add_argument("--output-dir", type=str, default="./gnnfingers_out")
     parser.add_argument("--gpu", type=int, default=0)
@@ -72,6 +76,55 @@ def _train_target(model, data, train_idx, num_epochs: int) -> None:
         loss = torch.nn.functional.cross_entropy(logits[train_idx], data.y[train_idx])
         loss.backward()
         optimizer.step()
+
+
+def _parse_csv(value: str) -> List[str]:
+    if not value:
+        return []
+    return [item.strip() for item in value.split(",") if item.strip()]
+
+
+def _align_dataset(data, feat_dim: int, num_classes: int):
+    features = data.x
+    if features.size(1) < feat_dim:
+        pad_cols = feat_dim - features.size(1)
+        padding = torch.zeros((features.size(0), pad_cols), dtype=features.dtype)
+        features = torch.cat([features, padding], dim=1)
+    elif features.size(1) > feat_dim:
+        features = features[:, :feat_dim]
+    labels = data.y % num_classes
+    return type(data)(x=features, edge_index=data.edge_index, y=labels)
+
+
+def _train_negative_models_on_dataset(
+    dataset_name: str,
+    architectures: List[str],
+    base_cfg: dict,
+    feat_dim: int,
+    num_classes: int,
+    num_models: int,
+    num_epochs: int,
+    device: torch.device,
+):
+    data, _ = load_npz_graph(dataset_name)
+    data = _align_dataset(data, feat_dim, num_classes)
+    train_idx, _, _ = split_graph(data, frac_list=[0.6, 0.2, 0.2])
+    data = data.to(device)
+    models = []
+    for idx in range(num_models):
+        arch = architectures[idx % len(architectures)]
+        model = _build_model(
+            arch,
+            feat_dim,
+            base_cfg["hidden_dim"],
+            num_classes,
+            base_cfg["num_layers"],
+            base_cfg["heads"],
+            base_cfg["dropout"],
+        ).to(device)
+        _train_target(model, data, train_idx, num_epochs=num_epochs)
+        models.append(model)
+    return models
 
 
 def _score_models(
@@ -131,7 +184,12 @@ def main() -> None:
         device=device,
     )
 
-    ensemble_cfg = EnsembleConfig(num_positive=args.num_positive, num_negative=args.num_negative)
+    negative_architectures = _parse_csv(args.negative_architectures) or [args.target_model]
+    ensemble_cfg = EnsembleConfig(
+        num_positive=args.num_positive,
+        num_negative=args.num_negative,
+        architectures=tuple(negative_architectures),
+    )
     base_cfg = {
         "hidden_dim": args.hidden_dim,
         "num_classes": num_classes,
@@ -140,6 +198,21 @@ def main() -> None:
         "dropout": args.dropout,
     }
     pos_models, neg_models = prepare_model_ensemble(target_model, data.to(device), train_idx, ensemble_cfg, base_cfg)
+    negative_datasets = _parse_csv(args.negative_datasets)
+    if negative_datasets:
+        for dataset_name in negative_datasets:
+            neg_models.extend(
+                _train_negative_models_on_dataset(
+                    dataset_name,
+                    negative_architectures,
+                    base_cfg,
+                    feat_dim,
+                    num_classes,
+                    args.negative_per_dataset,
+                    args.negative_epochs,
+                    device,
+                )
+            )
     pos_train = pos_models[: len(pos_models) // 2]
     pos_test = pos_models[len(pos_models) // 2 :]
     neg_train = neg_models[: len(neg_models) // 2]
@@ -190,6 +263,10 @@ def main() -> None:
             "adj_lr": args.adj_lr,
             "num_positive": args.num_positive,
             "num_negative": args.num_negative,
+            "negative_datasets": negative_datasets,
+            "negative_architectures": negative_architectures,
+            "negative_per_dataset": args.negative_per_dataset,
+            "negative_epochs": args.negative_epochs,
             "target_epochs": args.target_epochs,
             "univerifier_input_dim": univerifier.net[0].in_features,
             "metrics": metrics,

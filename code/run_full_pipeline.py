@@ -39,7 +39,12 @@ def _parse_verification(output: str) -> tuple[float | None, str | None]:
     return o_plus, verdict
 
 
-def _summarize_verdicts(title: str, verdicts: list[str]) -> None:
+def _summarize_verdicts(
+    title: str,
+    verdicts: list[str],
+    scores: list[float],
+    expected: str | None,
+) -> None:
     if not verdicts:
         print(f"[pipeline] summary {title}: no results")
         return
@@ -50,9 +55,17 @@ def _summarize_verdicts(title: str, verdicts: list[str]) -> None:
         else:
             counts["unknown"] += 1
     total = sum(counts.values())
+    accuracy = None
+    if expected:
+        accuracy = sum(1 for verdict in verdicts if verdict == expected) / total if total else 0.0
+    avg_score = sum(scores) / len(scores) if scores else 0.0
     print(
-        f"[pipeline] summary {title}: total={total} pirated={counts['pirated']} irrelevant={counts['irrelevant']} unknown={counts['unknown']}"
+        f"[pipeline] summary {title}: total={total} pirated={counts['pirated']} "
+        f"irrelevant={counts['irrelevant']} unknown={counts['unknown']} "
+        f"avg_o_plus={avg_score:.4f}"
     )
+    if accuracy is not None:
+        print(f"[pipeline] summary {title}: expected={expected} accuracy={accuracy:.4f}")
 
 
 def main() -> None:
@@ -72,6 +85,13 @@ def main() -> None:
     num_steal_runs = 32
     finetune_epochs = 20
     prune_ratios = [0.3]
+    negative_datasets = ["dblp", "pubmed"]
+    negative_architectures = ["gat", "gin", "sage"]
+    negative_per_dataset = 8
+    negative_epochs = 20
+    expected_raw_verdict = "pirated"
+    expected_pruned_verdict = "pirated"
+    expected_finetuned_verdict = "pirated"
     structure_mode = "learned"
     classifier_epochs = 50
     steal_log_every = 50
@@ -146,6 +166,14 @@ def main() -> None:
         target_model,
         "--num-fingerprints",
         "32",
+        "--negative-datasets",
+        ",".join(negative_datasets),
+        "--negative-architectures",
+        ",".join(negative_architectures),
+        "--negative-per-dataset",
+        str(negative_per_dataset),
+        "--negative-epochs",
+        str(negative_epochs),
         "--output-dir",
         gnnfingers_out,
         "--gpu",
@@ -195,6 +223,9 @@ def main() -> None:
     raw_verdicts: list[str] = []
     pruned_verdicts: list[str] = []
     finetuned_verdicts: list[str] = []
+    raw_scores: list[float] = []
+    pruned_scores: list[float] = []
+    finetuned_scores: list[float] = []
 
     _run_step("1) train target model", train_target_cmd, repo_root)
     for label, cmd in steal_cmds:
@@ -211,7 +242,9 @@ def main() -> None:
                 repo_root,
                 capture=True,
             )
-            _, verdict = _parse_verification(output)
+            score, verdict = _parse_verification(output)
+            if score is not None:
+                raw_scores.append(score)
             if verdict:
                 raw_verdicts.append(verdict)
             for ratio in prune_ratios:
@@ -244,7 +277,9 @@ def main() -> None:
                     repo_root,
                     capture=True,
                 )
-                _, verdict = _parse_verification(output)
+                score, verdict = _parse_verification(output)
+                if score is not None:
+                    pruned_scores.append(score)
                 if verdict:
                     pruned_verdicts.append(verdict)
             if finetune_epochs > 0:
@@ -272,13 +307,15 @@ def main() -> None:
                     repo_root,
                     capture=True,
                 )
-                _, verdict = _parse_verification(output)
+                score, verdict = _parse_verification(output)
+                if score is not None:
+                    finetuned_scores.append(score)
                 if verdict:
                     finetuned_verdicts.append(verdict)
 
-    _summarize_verdicts("raw", raw_verdicts)
-    _summarize_verdicts("pruned", pruned_verdicts)
-    _summarize_verdicts("finetuned", finetuned_verdicts)
+    _summarize_verdicts("raw", raw_verdicts, raw_scores, expected_raw_verdict)
+    _summarize_verdicts("pruned", pruned_verdicts, pruned_scores, expected_pruned_verdict)
+    _summarize_verdicts("finetuned", finetuned_verdicts, finetuned_scores, expected_finetuned_verdict)
 
 
 if __name__ == "__main__":

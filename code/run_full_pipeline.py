@@ -7,6 +7,7 @@ from pathlib import Path
 
 sys.path.append(str(Path(__file__).resolve().parent))
 
+import re
 import subprocess
 import torch
 
@@ -39,6 +40,37 @@ def _parse_verification(output: str) -> tuple[float | None, str | None]:
     return o_plus, verdict
 
 
+
+
+def _parse_attack_metrics(output: str) -> tuple[float | None, float | None, float | None]:
+    surrogate_acc = None
+    detached_acc = None
+    fidelity = None
+    for line in output.splitlines():
+        if line.startswith("[Stealing]") and "fidelity=" in line:
+            for key in ("surrogate_acc", "detached_acc", "fidelity"):
+                match = re.search(rf"{key}=([0-9]*\.?[0-9]+)", line)
+                if match:
+                    value = float(match.group(1))
+                    if key == "surrogate_acc":
+                        surrogate_acc = value
+                    elif key == "detached_acc":
+                        detached_acc = value
+                    else:
+                        fidelity = value
+    return surrogate_acc, detached_acc, fidelity
+
+
+def _summarize_metrics(title: str, values: list[float]) -> None:
+    if not values:
+        print(f"[pipeline] summary {title}: no results")
+        return
+    avg = sum(values) / len(values)
+    print(
+        f"[pipeline] summary {title}: count={len(values)} "
+        f"avg={avg:.4f} min={min(values):.4f} max={max(values):.4f}"
+    )
+
 def _summarize_verdicts(
     title: str,
     verdicts: list[str],
@@ -65,7 +97,8 @@ def _summarize_verdicts(
         f"avg_o_plus={avg_score:.4f}"
     )
     if accuracy is not None:
-        print(f"[pipeline] summary {title}: expected={expected} accuracy={accuracy:.4f}")
+        miss_rate = 1.0 - accuracy
+        print(f"[pipeline] summary {title}: expected={expected} accuracy={accuracy:.4f} miss_rate={miss_rate:.4f}")
 
 
 def main() -> None:
@@ -224,10 +257,20 @@ def main() -> None:
     raw_scores: list[float] = []
     pruned_scores: list[float] = []
     finetuned_scores: list[float] = []
+    steal_surrogate_accs: list[float] = []
+    steal_detached_accs: list[float] = []
+    steal_fidelities: list[float] = []
 
     _run_step("1) train target model", train_target_cmd, repo_root)
     for label, cmd in steal_cmds:
-        _run_step(label, cmd, repo_root)
+        attack_output = _run_step(label, cmd, repo_root, capture=True)
+        surrogate_acc, detached_acc, fidelity = _parse_attack_metrics(attack_output)
+        if surrogate_acc is not None:
+            steal_surrogate_accs.append(surrogate_acc)
+        if detached_acc is not None:
+            steal_detached_accs.append(detached_acc)
+        if fidelity is not None:
+            steal_fidelities.append(fidelity)
     _run_step("3) train GNNFingers + classifier", train_gnnfingers_cmd, repo_root)
     for hidden_size in surrogate_hidden_sizes:
         for run_index in range(1, num_steal_runs + 1):
@@ -310,6 +353,10 @@ def main() -> None:
                     finetuned_scores.append(score)
                 if verdict:
                     finetuned_verdicts.append(verdict)
+
+    _summarize_metrics("steal_surrogate_acc", steal_surrogate_accs)
+    _summarize_metrics("steal_detached_acc", steal_detached_accs)
+    _summarize_metrics("steal_fidelity", steal_fidelities)
 
     _summarize_verdicts("raw", raw_verdicts, raw_scores, expected_raw_verdict)
     _summarize_verdicts("pruned", pruned_verdicts, pruned_scores, expected_pruned_verdict)

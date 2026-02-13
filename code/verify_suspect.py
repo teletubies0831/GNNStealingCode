@@ -20,7 +20,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser("Verify suspect with GNNFingers")
     parser.add_argument("--fingerprints", type=str, required=True)
     parser.add_argument("--univerifier", type=str, required=True)
-    parser.add_argument("--lambda-threshold", type=float, default=0.5)
+    parser.add_argument("--lambda-threshold", type=float, default=-1.0)
     parser.add_argument("--task", type=str, default="node_classification")
     parser.add_argument("--suspect-model", type=str, default="gat")
     parser.add_argument("--suspect-ckpt", type=str, default="")
@@ -63,8 +63,14 @@ def main() -> None:
     if config_path.exists():
         cfg = load_config(config_path)
         input_dim = cfg.get("univerifier_input_dim")
+        trained_lambda = cfg.get("lambda_threshold")
     else:
         input_dim = None
+        trained_lambda = None
+
+    lambda_threshold = args.lambda_threshold
+    if lambda_threshold < 0:
+        lambda_threshold = float(trained_lambda) if trained_lambda is not None else 0.5
 
     if input_dim is None:
         sample_output = flatten_outputs(
@@ -101,8 +107,9 @@ def main() -> None:
     probs = univerifier(batch)
     o_plus = probs[:, 0].mean().item()
 
-    verdict = "pirated" if o_plus >= args.lambda_threshold else "irrelevant"
+    verdict = "pirated" if o_plus >= lambda_threshold else "irrelevant"
     print(f"o_plus={o_plus:.4f}")
+    print(f"lambda={lambda_threshold:.4f}")
     print(f"verdict={verdict}")
 
 

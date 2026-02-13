@@ -186,8 +186,6 @@ def main() -> None:
         f"{gnnfingers_out}/fingerprints.pt",
         "--univerifier",
         f"{gnnfingers_out}/univerifier.pt",
-        "--lambda-threshold",
-        "0.5",
         "--suspect-model",
         suspect_model,
         "--suspect-layers",

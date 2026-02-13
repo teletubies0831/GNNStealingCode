@@ -12,7 +12,13 @@ from gnnfingers.fingerprints import GraphFingerprintSet
 from gnnfingers.joint_train import JointTrainConfig, train_gnnfingers
 from gnnfingers.obfuscation import EnsembleConfig, prepare_model_ensemble
 from gnnfingers.univerifier import UniverifierMLP
-from gnnfingers.utils import compute_thresholds, evaluate_metrics, flatten_outputs, save_config
+from gnnfingers.utils import (
+    compute_thresholds,
+    evaluate_metrics,
+    flatten_outputs,
+    save_config,
+    select_best_threshold,
+)
 from src.gat import GAT
 from src.gin import GIN
 from src.sage import SAGE
@@ -233,6 +239,7 @@ def main() -> None:
     scores_neg = _score_models(univerifier, neg_test, fingerprint_set, args.task, device)
     lambdas, _ = compute_thresholds(scores_pos + scores_neg)
     metrics = evaluate_metrics(scores_pos, scores_neg, lambdas)
+    best_lambda = select_best_threshold(scores_pos, scores_neg)
 
     output_dir = Path(args.output_dir)
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -270,12 +277,14 @@ def main() -> None:
             "target_epochs": args.target_epochs,
             "univerifier_input_dim": univerifier.net[0].in_features,
             "metrics": metrics,
+            "lambda_threshold": best_lambda,
         },
     )
 
     print(f"[GNNFingers] Saved fingerprints to {fingerprint_path}")
     print(f"[GNNFingers] Saved univerifier to {univerifier_path}")
     print(f"[GNNFingers] Metrics: {metrics}")
+    print(f"[GNNFingers] Suggested lambda_threshold: {best_lambda:.4f}")
 
 
 if __name__ == "__main__":

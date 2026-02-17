@@ -231,6 +231,8 @@ def main() -> None:
     else:
         _, surrogate_logits, surrogate_embeddings = evaluate_sage(surrogate_model, data, test_idx, device)
 
+    surrogate_acc = (surrogate_logits[test_idx].argmax(dim=1) == data.y[test_idx]).float().mean().item()
+
     detached_classifier = train_detached_classifier(data.y[test_idx], surrogate_embeddings[test_idx])
     detached_acc = detached_classifier.score(
         surrogate_embeddings[test_idx].detach().cpu().numpy(),
@@ -249,7 +251,7 @@ def main() -> None:
         torch.from_numpy(detached_preds).to(device),
         target_test_logits[test_idx].to(device),
     )
-    print(f"[Stealing] detached_acc={detached_acc:.4f} fidelity={fidelity:.4f}")
+    print(f"[Stealing] surrogate_acc={surrogate_acc:.4f} detached_acc={detached_acc:.4f} fidelity={fidelity:.4f}")
 
     output_folder = Path("./results_acc_fidelity") / f"results_{args.target_model}_{args.target_model_dim}_{args.surrogate_model}_{args.num_hidden}"
     output_folder.mkdir(parents=True, exist_ok=True)
@@ -259,7 +261,7 @@ def main() -> None:
         handle.write(
             f"{args.target_model},{args.target_model_dim},{args.surrogate_model},{args.num_hidden},"
             f"{args.recovery_from},{args.round_index},{args.query_ratio},"
-            f"{detached_acc},{detached_acc},{fidelity}\n"
+            f"{surrogate_acc},{detached_acc},{fidelity}\n"
         )
 
 

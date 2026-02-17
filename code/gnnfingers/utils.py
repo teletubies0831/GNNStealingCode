@@ -66,6 +66,26 @@ def evaluate_metrics(
     }
 
 
+def select_best_threshold(scores_pos: List[float], scores_neg: List[float]) -> float:
+    """Select a lambda threshold that maximizes balanced accuracy."""
+    pos = np.array(scores_pos)
+    neg = np.array(scores_neg)
+    if pos.size == 0 or neg.size == 0:
+        return 0.5
+
+    candidates = np.unique(np.concatenate([pos, neg]))
+    best_lambda = float(candidates[0])
+    best_score = -1.0
+    for lam in candidates:
+        tpr = np.mean(pos >= lam)
+        tnr = np.mean(neg < lam)
+        balanced_acc = 0.5 * (tpr + tnr)
+        if balanced_acc > best_score:
+            best_score = balanced_acc
+            best_lambda = float(lam)
+    return best_lambda
+
+
 def save_config(path: Path, config: Dict) -> None:
     path.write_text(yaml.safe_dump(config, sort_keys=False), encoding="utf-8")
 
